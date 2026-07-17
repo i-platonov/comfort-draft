@@ -81,27 +81,43 @@ export default function SidePanel() {
       reader.readAsText(file);
     } else {
       // ---- Raster image import ----
-      const src = URL.createObjectURL(file);
-      const img = new window.Image();
-      img.onload = () => {
-        const vw = Math.max(window.innerWidth - 320, 320);
-        const vh = window.innerHeight;
-        const { fitX, fitY, fitScale } = fitImageToViewport(img.naturalWidth, img.naturalHeight, vw, vh);
-        setBackground({
-          kind: 'image',
-          src,
-          naturalWidth: img.naturalWidth,
-          naturalHeight: img.naturalHeight,
-          fitX,
-          fitY,
-          fitScale,
-        });
+      const reader = new FileReader();
+      reader.onload = (loadEvent) => {
+        const src = loadEvent.target?.result;
+        if (typeof src !== 'string') {
+          setImportError('Failed to read image file.');
+          return;
+        }
+
+        const img = new window.Image();
+        img.onload = () => {
+          const vw = Math.max(window.innerWidth - 320, 320);
+          const vh = window.innerHeight;
+          const { fitX, fitY, fitScale } = fitImageToViewport(
+            img.naturalWidth,
+            img.naturalHeight,
+            vw,
+            vh,
+          );
+          setBackground({
+            kind: 'image',
+            src,
+            naturalWidth: img.naturalWidth,
+            naturalHeight: img.naturalHeight,
+            fitX,
+            fitY,
+            fitScale,
+          });
+        };
+        img.onerror = () => {
+          setImportError('Failed to load image file.');
+        };
+        img.src = src;
       };
-      img.onerror = () => {
-        URL.revokeObjectURL(src);
-        setImportError('Failed to load image file.');
+      reader.onerror = () => {
+        setImportError('Failed to read image file.');
       };
-      img.src = src;
+      reader.readAsDataURL(file);
     }
 
     event.target.value = '';

@@ -15,6 +15,7 @@ export interface Zone {
   color: string;
   polygon: Polygon;
   spacingMm: number;
+  paddingMm: number;
   spiral: PipePath | null;
   spiralLengthM: number;
   leaderLengthM: number;

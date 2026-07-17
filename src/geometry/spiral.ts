@@ -829,11 +829,14 @@ export function generateSerpentine(
     polygon: Polygon,
     spacingPx: number,
     connectionHint?: Point,
+    paddingPx = 0,
 ): PipePath {
     if (
         polygon.points.length < 3 ||
         !Number.isFinite(spacingPx) ||
-        spacingPx <= 0
+        spacingPx <= 0 ||
+        !Number.isFinite(paddingPx) ||
+        paddingPx < 0
     ) {
         return [];
     }
@@ -846,8 +849,13 @@ export function generateSerpentine(
     const yMin = Math.min(...ys);
     const yMax = Math.max(...ys);
 
-    const zoneWidth = xMax - xMin;
-    const zoneHeight = yMax - yMin;
+    const paddedXMin = xMin + paddingPx;
+    const paddedXMax = xMax - paddingPx;
+    const paddedYMin = yMin + paddingPx;
+    const paddedYMax = yMax - paddingPx;
+
+    const zoneWidth = paddedXMax - paddedXMin;
+    const zoneHeight = paddedYMax - paddedYMin;
 
     if (
         zoneWidth < spacingPx * 3 ||
@@ -893,10 +901,10 @@ export function generateSerpentine(
         transformFromCanonical(
             point,
             side,
-            xMin,
-            xMax,
-            yMin,
-            yMax,
+            paddedXMin,
+            paddedXMax,
+            paddedYMin,
+            paddedYMax,
         ),
     );
 }

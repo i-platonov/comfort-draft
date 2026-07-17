@@ -9,9 +9,10 @@ interface Props {
 }
 
 const SPACING_PRESETS = [100, 150, 200, 250];
+const PADDING_PRESETS = [0, 50, 100, 150];
 
 export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props) {
-  const { selectZone, deleteZone, updateZoneSpacing, updateZoneName, setToolMode } = useStore();
+  const { selectZone, deleteZone, updateZoneSpacing, updateZonePadding, updateZoneName, setToolMode } = useStore();
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(zone.name);
 
@@ -102,6 +103,34 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
             max={500}
             value={zone.spacingMm}
             onChange={(event) => updateZoneSpacing(zone.id, Number(event.target.value))}
+            className="spacing-input"
+            onClick={(event) => event.stopPropagation()}
+          />
+          <span>mm</span>
+        </div>
+      </div>
+
+      <div className="zone-spacing">
+        <label>Padding:</label>
+        <div className="spacing-presets">
+          {PADDING_PRESETS.map((padding) => (
+            <button
+              key={padding}
+              className={`btn-preset ${zone.paddingMm === padding ? 'active' : ''}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                updateZonePadding(zone.id, padding);
+              }}
+            >
+              {padding}
+            </button>
+          ))}
+          <input
+            type="number"
+            min={0}
+            max={1000}
+            value={zone.paddingMm}
+            onChange={(event) => updateZonePadding(zone.id, Number(event.target.value))}
             className="spacing-input"
             onClick={(event) => event.stopPropagation()}
           />

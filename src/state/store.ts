@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
+import { createJSONStorage, persist, type PersistOptions } from 'zustand/middleware';
 import { Background, CalibrationState, Manifold, Point, ToolMode, Zone } from '../types';
 import { generateSerpentine, getSpiralStubs } from '../geometry/spiral';
 import { leaderLengthPx, pathLengthPx, pxToMeters } from '../geometry/length';
@@ -16,6 +17,8 @@ const ZONE_COLORS = [
   '#e91e63',
   '#00bcd4',
 ];
+
+const DEFAULT_ZONE_PADDING_MM = 100;
 
 interface StoreState {
   pixelsPerMeter: number;
@@ -50,6 +53,7 @@ interface StoreState {
   deleteZone: (id: string) => void;
   selectZone: (id: string | null) => void;
   updateZoneSpacing: (id: string, spacingMm: number) => void;
+  updateZonePadding: (id: string, paddingMm: number) => void;
   updateZoneName: (id: string, name: string) => void;
   updateZoneVertex: (zoneId: string, vertexIdx: number, pt: Point) => void;
   setPixelsPerMeter: (ppm: number) => void;
@@ -63,7 +67,87 @@ interface StoreState {
   recomputeZoneSpiral: (zoneId: string) => void;
 }
 
+export type PersistedZone = Pick<Zone, 'id' | 'name' | 'color' | 'polygon' | 'spacingMm' | 'paddingMm'>;
+
+export interface PersistedStoreState {
+  pixelsPerMeter: number;
+  maxCircuitLengthM: number;
+  defaultSpacingMm: number;
+  background: Background | null;
+  zones: PersistedZone[];
+  manifold: Manifold | null;
+  stageScale: number;
+  stageX: number;
+  stageY: number;
+}
+
+export const UFH_STORE_STORAGE_KEY = 'ufh-designer-store';
+
 let zoneCounter = 1;
+
+function createTransientState(): Pick<
+  StoreState,
+  'selectedZoneId' | 'toolMode' | 'drawingPoints' | 'drawRectStart' | 'calibration'
+> {
+  return {
+    selectedZoneId: null,
+    toolMode: 'select',
+    drawingPoints: [],
+    drawRectStart: null,
+    calibration: { active: false, point1: null, point2: null },
+  };
+}
+
+function recomputeZones(
+  zones: Zone[],
+  manifold: Manifold | null,
+  pixelsPerMeter: number,
+): Zone[] {
+  return zones.map((zone) => recomputeSpiral(zone, manifold, pixelsPerMeter));
+}
+
+function getZonePaddingMm(zone: Partial<Pick<Zone, 'paddingMm'>>): number {
+  if (!Number.isFinite(zone.paddingMm)) {
+    return DEFAULT_ZONE_PADDING_MM;
+  }
+
+  return Math.max(0, zone.paddingMm ?? DEFAULT_ZONE_PADDING_MM);
+}
+
+function toPersistedZone(zone: Zone): PersistedZone {
+  return {
+    id: zone.id,
+    name: zone.name,
+    color: zone.color,
+    polygon: zone.polygon,
+    spacingMm: zone.spacingMm,
+    paddingMm: zone.paddingMm,
+  };
+}
+
+function hydrateZone(zone: Partial<PersistedZone> & Pick<Zone, 'id' | 'name' | 'color' | 'polygon' | 'spacingMm'>): Zone {
+  return {
+    id: zone.id,
+    name: zone.name,
+    color: zone.color,
+    polygon: zone.polygon,
+    spacingMm: zone.spacingMm,
+    paddingMm: getZonePaddingMm(zone),
+    spiral: null,
+    spiralLengthM: 0,
+    leaderLengthM: 0,
+    areaM2: 0,
+  };
+}
+
+function getNextZoneCounter(zones: Zone[]): number {
+  const highestAutoZoneNumber = zones.reduce((highest, zone) => {
+    const match = zone.name.match(/^Zone (\d+)$/);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+
+  return Math.max(zones.length + 1, highestAutoZoneNumber + 1, 1);
+}
 
 function recomputeSpiral(
   zone: Zone,
@@ -71,8 +155,9 @@ function recomputeSpiral(
   pixelsPerMeter: number,
 ): Zone {
   const spacingPx = (zone.spacingMm / 1000) * pixelsPerMeter;
+  const paddingPx = (zone.paddingMm / 1000) * pixelsPerMeter;
   const hint = manifold?.position;
-  const spiral = generateSerpentine(zone.polygon, spacingPx, hint);
+  const spiral = generateSerpentine(zone.polygon, spacingPx, hint, paddingPx);
   const spiralLengthPx = pathLengthPx(spiral);
   const spiralLengthM = pxToMeters(spiralLengthPx, pixelsPerMeter);
   const areaPx = polygonArea(zone.polygon.points);
@@ -104,21 +189,56 @@ function rectPolygon(a: Point, b: Point) {
   };
 }
 
-export const useStore = create<StoreState>((set, get) => ({
+export function partializeStoreState(state: StoreState): PersistedStoreState {
+  return {
+    pixelsPerMeter: state.pixelsPerMeter,
+    maxCircuitLengthM: state.maxCircuitLengthM,
+    defaultSpacingMm: state.defaultSpacingMm,
+    background: state.background,
+    zones: state.zones.map(toPersistedZone),
+    manifold: state.manifold,
+    stageScale: state.stageScale,
+    stageX: state.stageX,
+    stageY: state.stageY,
+  };
+}
+
+export function mergePersistedStoreState(
+  persistedState: unknown,
+  currentState: StoreState,
+): StoreState {
+  const persisted =
+    persistedState && typeof persistedState === 'object'
+      ? (persistedState as Partial<PersistedStoreState>)
+      : {};
+  const hydratedZones = Array.isArray(persisted.zones)
+    ? persisted.zones.map((zone) =>
+        hydrateZone(zone as Partial<PersistedZone> & Pick<Zone, 'id' | 'name' | 'color' | 'polygon' | 'spacingMm'>),
+      )
+    : currentState.zones;
+  const merged = { ...currentState, ...persisted, zones: hydratedZones };
+  const zones = recomputeZones(merged.zones, merged.manifold, merged.pixelsPerMeter);
+
+  zoneCounter = getNextZoneCounter(zones);
+
+  return {
+    ...merged,
+    zones,
+    ...createTransientState(),
+  };
+}
+
+const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   pixelsPerMeter: 100,
   maxCircuitLengthM: 100,
   defaultSpacingMm: 150,
   background: null,
   zones: [],
-  selectedZoneId: null,
   manifold: null,
-  toolMode: 'select',
-  drawingPoints: [],
-  drawRectStart: null,
-  calibration: { active: false, point1: null, point2: null },
   stageScale: 1,
   stageX: 0,
   stageY: 0,
+  ...createTransientState(),
 
   setBackground: (bg) => set({ background: bg }),
 
@@ -155,6 +275,7 @@ export const useStore = create<StoreState>((set, get) => ({
       color: ZONE_COLORS[colorIdx],
       polygon: { points: drawingPoints },
       spacingMm: defaultSpacingMm,
+      paddingMm: DEFAULT_ZONE_PADDING_MM,
       spiral: null,
       spiralLengthM: 0,
       leaderLengthM: 0,
@@ -192,6 +313,7 @@ export const useStore = create<StoreState>((set, get) => ({
       color: ZONE_COLORS[colorIdx],
       polygon: rectPolygon(drawRectStart, pt),
       spacingMm: defaultSpacingMm,
+      paddingMm: DEFAULT_ZONE_PADDING_MM,
       spiral: null,
       spiralLengthM: 0,
       leaderLengthM: 0,
@@ -221,6 +343,17 @@ export const useStore = create<StoreState>((set, get) => ({
     const { zones, manifold, pixelsPerMeter } = get();
     const updated = zones.map((zone) =>
       zone.id === id ? recomputeSpiral({ ...zone, spacingMm }, manifold, pixelsPerMeter) : zone,
+    );
+    set({ zones: updated });
+  },
+
+  updateZonePadding: (id, paddingMm) => {
+    const { zones, manifold, pixelsPerMeter } = get();
+    const normalizedPaddingMm = Math.max(0, paddingMm);
+    const updated = zones.map((zone) =>
+      zone.id === id
+        ? recomputeSpiral({ ...zone, paddingMm: normalizedPaddingMm }, manifold, pixelsPerMeter)
+        : zone,
     );
     set({ zones: updated });
   },
@@ -291,4 +424,16 @@ export const useStore = create<StoreState>((set, get) => ({
     );
     set({ zones: updated });
   },
-}));
+});
+
+const persistOptions: PersistOptions<StoreState, PersistedStoreState> = {
+  name: UFH_STORE_STORAGE_KEY,
+  storage: createJSONStorage(() => localStorage),
+  partialize: partializeStoreState,
+  merge: (persistedState, currentState) => mergePersistedStoreState(persistedState, currentState),
+};
+
+export const createUfhStore = () =>
+  create<StoreState>()(persist<StoreState, [], [], PersistedStoreState>(createStoreState, persistOptions));
+
+export const useStore = createUfhStore();
