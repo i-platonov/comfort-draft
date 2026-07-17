@@ -1,6 +1,14 @@
 import { create, type StateCreator } from 'zustand';
 import { createJSONStorage, persist, type PersistOptions } from 'zustand/middleware';
-import { Background, CalibrationState, Manifold, Point, ToolMode, Zone } from '../types';
+import {
+  Background,
+  CalibrationState,
+  Manifold,
+  Point,
+  ToolMode,
+  Zone,
+  ZoneConnectionCorner,
+} from '../types';
 import { generateSerpentine, getSpiralStubs } from '../geometry/spiral';
 import { leaderLengthPx, pathLengthPx, pxToMeters } from '../geometry/length';
 import { polygonArea } from '../geometry/offset';
@@ -19,6 +27,7 @@ const ZONE_COLORS = [
 ];
 
 const DEFAULT_ZONE_PADDING_MM = 100;
+const DEFAULT_ZONE_CONNECTION_CORNER: ZoneConnectionCorner = 'bottom-left';
 
 interface StoreState {
   pixelsPerMeter: number;
@@ -42,6 +51,7 @@ interface StoreState {
   setToolMode: (mode: ToolMode) => void;
   setManifold: (pos: Point) => void;
   updateManifoldPosition: (pos: Point) => void;
+  setManifoldRotation: (rotationDeg: number) => void;
   addDrawingPoint: (pt: Point) => void;
   closeZone: () => void;
   cancelDrawing: () => void;
@@ -54,6 +64,7 @@ interface StoreState {
   selectZone: (id: string | null) => void;
   updateZoneSpacing: (id: string, spacingMm: number) => void;
   updateZonePadding: (id: string, paddingMm: number) => void;
+  updateZoneConnectionCorner: (id: string, corner: ZoneConnectionCorner) => void;
   updateZoneName: (id: string, name: string) => void;
   updateZoneVertex: (zoneId: string, vertexIdx: number, pt: Point) => void;
   setPixelsPerMeter: (ppm: number) => void;
@@ -64,10 +75,14 @@ interface StoreState {
   finishCalibration: (realDistanceM: number) => void;
   cancelCalibration: () => void;
   setStageTransform: (scale: number, x: number, y: number) => void;
+  resetView: () => void;
   recomputeZoneSpiral: (zoneId: string) => void;
 }
 
-export type PersistedZone = Pick<Zone, 'id' | 'name' | 'color' | 'polygon' | 'spacingMm' | 'paddingMm'>;
+export type PersistedZone = Pick<
+  Zone,
+  'id' | 'name' | 'color' | 'polygon' | 'spacingMm' | 'paddingMm' | 'connectionCorner'
+>;
 
 export interface PersistedStoreState {
   pixelsPerMeter: number;
@@ -76,9 +91,6 @@ export interface PersistedStoreState {
   background: Background | null;
   zones: PersistedZone[];
   manifold: Manifold | null;
-  stageScale: number;
-  stageX: number;
-  stageY: number;
 }
 
 export const UFH_STORE_STORAGE_KEY = 'ufh-designer-store';
@@ -106,12 +118,59 @@ function recomputeZones(
   return zones.map((zone) => recomputeSpiral(zone, manifold, pixelsPerMeter));
 }
 
+function getZoneBounds(zone: Zone) {
+  const xs = zone.polygon.points.map((point) => point.x);
+  const ys = zone.polygon.points.map((point) => point.y);
+  return {
+    minX: Math.min(...xs),
+    maxX: Math.max(...xs),
+    minY: Math.min(...ys),
+    maxY: Math.max(...ys),
+  };
+}
+
+function getZoneConnectionHint(zone: Zone, manifold: Manifold | null): Point | undefined {
+  if (zone.polygon.points.length < 3) return manifold?.position;
+
+  const bounds = getZoneBounds(zone);
+  const insetY = (bounds.minY + bounds.maxY) / 2;
+  const insetX = (bounds.minX + bounds.maxX) / 2;
+  const far = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, 1000) * 4;
+
+  switch (zone.connectionCorner) {
+    case 'top-left':
+      return { x: bounds.minX - far, y: insetY };
+    case 'top-right':
+      return { x: insetX, y: bounds.minY - far };
+    case 'bottom-right':
+      return { x: bounds.maxX + far, y: insetY };
+    case 'bottom-left':
+      return { x: insetX, y: bounds.maxY + far };
+  }
+}
+
 function getZonePaddingMm(zone: Partial<Pick<Zone, 'paddingMm'>>): number {
   if (!Number.isFinite(zone.paddingMm)) {
     return DEFAULT_ZONE_PADDING_MM;
   }
 
   return Math.max(0, zone.paddingMm ?? DEFAULT_ZONE_PADDING_MM);
+}
+
+function getZoneConnectionCorner(
+  zone: Partial<Pick<Zone, 'connectionCorner'>>,
+): ZoneConnectionCorner {
+  const corner = zone.connectionCorner;
+  if (
+    corner === 'top-left' ||
+    corner === 'top-right' ||
+    corner === 'bottom-left' ||
+    corner === 'bottom-right'
+  ) {
+    return corner;
+  }
+
+  return DEFAULT_ZONE_CONNECTION_CORNER;
 }
 
 function toPersistedZone(zone: Zone): PersistedZone {
@@ -122,6 +181,7 @@ function toPersistedZone(zone: Zone): PersistedZone {
     polygon: zone.polygon,
     spacingMm: zone.spacingMm,
     paddingMm: zone.paddingMm,
+    connectionCorner: zone.connectionCorner,
   };
 }
 
@@ -133,6 +193,7 @@ function hydrateZone(zone: Partial<PersistedZone> & Pick<Zone, 'id' | 'name' | '
     polygon: zone.polygon,
     spacingMm: zone.spacingMm,
     paddingMm: getZonePaddingMm(zone),
+    connectionCorner: getZoneConnectionCorner(zone),
     spiral: null,
     spiralLengthM: 0,
     leaderLengthM: 0,
@@ -149,6 +210,19 @@ function getNextZoneCounter(zones: Zone[]): number {
   return Math.max(zones.length + 1, highestAutoZoneNumber + 1, 1);
 }
 
+function normalizeRotation(rotationDeg: number): number {
+  const wrapped = rotationDeg % 360;
+  return wrapped < 0 ? wrapped + 360 : wrapped;
+}
+
+function normalizeManifold(manifold: Manifold | null): Manifold | null {
+  if (!manifold) return null;
+  return {
+    ...manifold,
+    rotationDeg: normalizeRotation(manifold.rotationDeg ?? 0),
+  };
+}
+
 function recomputeSpiral(
   zone: Zone,
   manifold: Manifold | null,
@@ -156,7 +230,7 @@ function recomputeSpiral(
 ): Zone {
   const spacingPx = (zone.spacingMm / 1000) * pixelsPerMeter;
   const paddingPx = (zone.paddingMm / 1000) * pixelsPerMeter;
-  const hint = manifold?.position;
+  const hint = getZoneConnectionHint(zone, manifold);
   const spiral = generateSerpentine(zone.polygon, spacingPx, hint, paddingPx);
   const spiralLengthPx = pathLengthPx(spiral);
   const spiralLengthM = pxToMeters(spiralLengthPx, pixelsPerMeter);
@@ -197,9 +271,6 @@ export function partializeStoreState(state: StoreState): PersistedStoreState {
     background: state.background,
     zones: state.zones.map(toPersistedZone),
     manifold: state.manifold,
-    stageScale: state.stageScale,
-    stageX: state.stageX,
-    stageY: state.stageY,
   };
 }
 
@@ -216,7 +287,12 @@ export function mergePersistedStoreState(
         hydrateZone(zone as Partial<PersistedZone> & Pick<Zone, 'id' | 'name' | 'color' | 'polygon' | 'spacingMm'>),
       )
     : currentState.zones;
-  const merged = { ...currentState, ...persisted, zones: hydratedZones };
+  const merged = {
+    ...currentState,
+    ...persisted,
+    manifold: normalizeManifold(persisted.manifold ?? currentState.manifold),
+    zones: hydratedZones,
+  };
   const zones = recomputeZones(merged.zones, merged.manifold, merged.pixelsPerMeter);
 
   zoneCounter = getNextZoneCounter(zones);
@@ -245,17 +321,29 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   setToolMode: (mode) => set({ toolMode: mode, drawingPoints: [], drawRectStart: null }),
 
   setManifold: (pos) => {
-    set({ manifold: { position: pos }, toolMode: 'select' });
+    const previousRotation = get().manifold?.rotationDeg ?? 0;
+    set({ manifold: { position: pos, rotationDeg: previousRotation }, toolMode: 'select' });
     const { zones, pixelsPerMeter } = get();
-    const updated = zones.map((zone) => recomputeSpiral(zone, { position: pos }, pixelsPerMeter));
+    const updated = zones.map((zone) =>
+      recomputeSpiral(zone, { position: pos, rotationDeg: previousRotation }, pixelsPerMeter),
+    );
     set({ zones: updated });
   },
 
   updateManifoldPosition: (pos) => {
-    set({ manifold: { position: pos } });
+    const rotationDeg = get().manifold?.rotationDeg ?? 0;
+    set({ manifold: { position: pos, rotationDeg } });
     const { zones, pixelsPerMeter } = get();
-    const updated = zones.map((zone) => recomputeSpiral(zone, { position: pos }, pixelsPerMeter));
+    const updated = zones.map((zone) =>
+      recomputeSpiral(zone, { position: pos, rotationDeg }, pixelsPerMeter),
+    );
     set({ zones: updated });
+  },
+
+  setManifoldRotation: (rotationDeg) => {
+    const manifold = get().manifold;
+    if (!manifold) return;
+    set({ manifold: { ...manifold, rotationDeg: normalizeRotation(rotationDeg) } });
   },
 
   addDrawingPoint: (pt) => set((state) => ({ drawingPoints: [...state.drawingPoints, pt] })),
@@ -276,6 +364,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
       polygon: { points: drawingPoints },
       spacingMm: defaultSpacingMm,
       paddingMm: DEFAULT_ZONE_PADDING_MM,
+      connectionCorner: DEFAULT_ZONE_CONNECTION_CORNER,
       spiral: null,
       spiralLengthM: 0,
       leaderLengthM: 0,
@@ -314,6 +403,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
       polygon: rectPolygon(drawRectStart, pt),
       spacingMm: defaultSpacingMm,
       paddingMm: DEFAULT_ZONE_PADDING_MM,
+      connectionCorner: DEFAULT_ZONE_CONNECTION_CORNER,
       spiral: null,
       spiralLengthM: 0,
       leaderLengthM: 0,
@@ -357,6 +447,19 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     );
     set({ zones: updated });
   },
+
+  updateZoneConnectionCorner: (id, corner) =>
+    set((state) => {
+      const updated = state.zones.map((zone) => {
+        if (zone.id !== id) return zone;
+        return recomputeSpiral(
+          { ...zone, connectionCorner: corner },
+          state.manifold,
+          state.pixelsPerMeter,
+        );
+      });
+      return { zones: updated };
+    }),
 
   updateZoneName: (id, name) =>
     set((state) => ({
@@ -416,6 +519,8 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   cancelCalibration: () => set({ calibration: { active: false, point1: null, point2: null } }),
 
   setStageTransform: (scale, x, y) => set({ stageScale: scale, stageX: x, stageY: y }),
+
+  resetView: () => set({ stageScale: 1, stageX: 0, stageY: 0 }),
 
   recomputeZoneSpiral: (zoneId) => {
     const { zones, manifold, pixelsPerMeter } = get();

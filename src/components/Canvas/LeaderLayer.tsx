@@ -1,29 +1,33 @@
-import { Fragment } from 'react';
+import { Fragment, useMemo } from 'react';
 import { Arrow, Layer } from 'react-konva';
 import { Manifold, Zone } from '../../types';
-import { getSpiralStubs } from '../../geometry/spiral';
+import { buildZoneLeaderRoutes } from '../../geometry/manifoldRouting';
 
 interface Props {
   zones: Zone[];
   manifold: Manifold | null;
+  pixelsPerMeter: number;
 }
 
-export default function LeaderLayer({ zones, manifold }: Props) {
+export default function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
   if (!manifold) return <Layer />;
+
+  const routes = useMemo(
+    () => buildZoneLeaderRoutes(zones, manifold, pixelsPerMeter),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [zones, manifold, pixelsPerMeter],
+  );
 
   return (
     <Layer listening={false}>
-      {zones.map((zone) => {
-        if (!zone.spiral || zone.spiral.length < 2) return null;
-        const stubs = getSpiralStubs(zone.spiral);
-        if (!stubs) return null;
-
-        const manifoldPosition = manifold.position;
+      {routes.map((route) => {
+        const zone = zones.find((candidate) => candidate.id === route.zoneId);
+        if (!zone) return null;
 
         return (
-          <Fragment key={zone.id}>
+          <Fragment key={route.zoneId}>
             <Arrow
-              points={[stubs.start.x, stubs.start.y, manifoldPosition.x, manifoldPosition.y]}
+              points={route.supplyPath.flatMap((point) => [point.x, point.y])}
               stroke={zone.color}
               strokeWidth={2}
               fill={zone.color}
@@ -33,7 +37,7 @@ export default function LeaderLayer({ zones, manifold }: Props) {
               dash={[6, 3]}
             />
             <Arrow
-              points={[stubs.end.x, stubs.end.y, manifoldPosition.x, manifoldPosition.y]}
+              points={route.returnPath.flatMap((point) => [point.x, point.y])}
               stroke={zone.color}
               strokeWidth={2}
               fill={zone.color}

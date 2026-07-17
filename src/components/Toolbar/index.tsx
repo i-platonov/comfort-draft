@@ -11,6 +11,7 @@ const TOOL_OPTIONS: Array<{ mode: ToolMode; label: string }> = [
 export default function Toolbar() {
   const toolMode = useStore((state) => state.toolMode);
   const setToolMode = useStore((state) => state.setToolMode);
+  const resetView = useStore((state) => state.resetView);
 
   return (
     <div className="tool-grid">
@@ -23,6 +24,9 @@ export default function Toolbar() {
           {label}
         </button>
       ))}
+      <button className="btn tool-btn" onClick={resetView} title="Reset zoom and pan to origin">
+        🔍 Reset View
+      </button>
     </div>
   );
 }

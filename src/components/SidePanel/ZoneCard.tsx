@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Zone } from '../../types';
+import { Zone, ZoneConnectionCorner } from '../../types';
 import { useStore } from '../../state/store';
 
 interface Props {
@@ -10,9 +10,23 @@ interface Props {
 
 const SPACING_PRESETS = [100, 150, 200, 250];
 const PADDING_PRESETS = [0, 50, 100, 150];
+const CORNER_OPTIONS: Array<{ value: ZoneConnectionCorner; label: string }> = [
+  { value: 'top-left', label: 'Top-left' },
+  { value: 'top-right', label: 'Top-right' },
+  { value: 'bottom-left', label: 'Bottom-left' },
+  { value: 'bottom-right', label: 'Bottom-right' },
+];
 
 export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props) {
-  const { selectZone, deleteZone, updateZoneSpacing, updateZonePadding, updateZoneName, setToolMode } = useStore();
+  const {
+    selectZone,
+    deleteZone,
+    updateZoneSpacing,
+    updateZonePadding,
+    updateZoneConnectionCorner,
+    updateZoneName,
+    setToolMode,
+  } = useStore();
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(zone.name);
 
@@ -135,6 +149,26 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
             onClick={(event) => event.stopPropagation()}
           />
           <span>mm</span>
+        </div>
+      </div>
+
+      <div className="zone-spacing">
+        <label>Inlet/outlet:</label>
+        <div className="spacing-presets">
+          <select
+            value={zone.connectionCorner}
+            onChange={(event) =>
+              updateZoneConnectionCorner(zone.id, event.target.value as ZoneConnectionCorner)
+            }
+            className="spacing-input"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {CORNER_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 

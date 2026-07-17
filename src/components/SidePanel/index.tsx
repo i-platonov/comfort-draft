@@ -38,6 +38,7 @@ export default function SidePanel() {
     setBackground,
     setMaxCircuitLength,
     setDefaultSpacing,
+    setManifoldRotation,
     startCalibration,
     finishCalibration,
     cancelCalibration,
@@ -250,6 +251,22 @@ export default function SidePanel() {
             onChange={(event) => setDefaultSpacing(Number(event.target.value))}
           />
           <span>mm</span>
+        </div>
+        <div className="setting-row">
+          <label>Manifold angle:</label>
+          <input
+            type="number"
+            step={1}
+            value={manifold?.rotationDeg ?? 0}
+            disabled={!manifold}
+            onChange={(event) => {
+              const next = Number(event.target.value);
+              if (Number.isFinite(next)) {
+                setManifoldRotation(next);
+              }
+            }}
+          />
+          <span>deg</span>
         </div>
       </section>
 

@@ -205,8 +205,8 @@ export default function Canvas() {
       )}
 
       <ZoneLayer zones={zones} selectedZoneId={selectedZoneId} toolMode={toolMode} />
-      <LeaderLayer zones={zones} manifold={manifold} />
-      <ManifoldLayer manifold={manifold} />
+      <LeaderLayer zones={zones} manifold={manifold} pixelsPerMeter={pixelsPerMeter} />
+      <ManifoldLayer manifold={manifold} zones={zones} pixelsPerMeter={pixelsPerMeter} />
 
       <Layer>
         {/* Free-polygon drawing preview */}

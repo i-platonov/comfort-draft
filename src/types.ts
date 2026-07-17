@@ -9,6 +9,8 @@ export interface Polygon {
 
 export type PipePath = Point[];
 
+export type ZoneConnectionCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
 export interface Zone {
   id: string;
   name: string;
@@ -16,6 +18,7 @@ export interface Zone {
   polygon: Polygon;
   spacingMm: number;
   paddingMm: number;
+  connectionCorner: ZoneConnectionCorner;
   spiral: PipePath | null;
   spiralLengthM: number;
   leaderLengthM: number;
@@ -24,6 +27,7 @@ export interface Zone {
 
 export interface Manifold {
   position: Point;
+  rotationDeg?: number;
 }
 
 export type ToolMode = 'select' | 'placeManifold' | 'drawZone' | 'drawRect' | 'editBoundary';
