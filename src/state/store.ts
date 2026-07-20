@@ -5,6 +5,7 @@ import {
   CalibrationState,
   Manifold,
   Point,
+  SpiralStartDirection,
   ToolMode,
   Zone,
   ZoneConnectionCorner,
@@ -28,6 +29,20 @@ const ZONE_COLORS = [
 
 const DEFAULT_ZONE_PADDING_MM = 100;
 const DEFAULT_ZONE_CONNECTION_CORNER: ZoneConnectionCorner = 'bottom-left';
+
+/**
+ * Historically each connection corner was hard-wired to a single manifold edge:
+ * bottom-left/top-right left the manifold vertically, bottom-right/top-left left
+ * horizontally. Keeping those as the defaults means existing designs look
+ * unchanged until the user explicitly picks a start direction.
+ */
+function getDefaultStartDirection(corner: ZoneConnectionCorner): SpiralStartDirection {
+  return corner === 'bottom-left' || corner === 'top-right' ? 'vertical' : 'horizontal';
+}
+
+const DEFAULT_ZONE_START_DIRECTION: SpiralStartDirection = getDefaultStartDirection(
+  DEFAULT_ZONE_CONNECTION_CORNER,
+);
 
 interface StoreState {
   pixelsPerMeter: number;
@@ -65,6 +80,7 @@ interface StoreState {
   updateZoneSpacing: (id: string, spacingMm: number) => void;
   updateZonePadding: (id: string, paddingMm: number) => void;
   updateZoneConnectionCorner: (id: string, corner: ZoneConnectionCorner) => void;
+  updateZoneStartDirection: (id: string, direction: SpiralStartDirection) => void;
   updateZoneName: (id: string, name: string) => void;
   updateZoneVertex: (zoneId: string, vertexIdx: number, pt: Point) => void;
   setPixelsPerMeter: (ppm: number) => void;
@@ -81,7 +97,7 @@ interface StoreState {
 
 export type PersistedZone = Pick<
   Zone,
-  'id' | 'name' | 'color' | 'polygon' | 'spacingMm' | 'paddingMm' | 'connectionCorner'
+  'id' | 'name' | 'color' | 'polygon' | 'spacingMm' | 'paddingMm' | 'connectionCorner' | 'startDirection'
 >;
 
 export interface PersistedStoreState {
@@ -129,23 +145,62 @@ function getZoneBounds(zone: Zone) {
   };
 }
 
-function getZoneConnectionHint(zone: Zone, manifold: Manifold | null): Point | undefined {
-  if (zone.polygon.points.length < 3) return manifold?.position;
+type ZoneEdge = 'top' | 'bottom' | 'left' | 'right';
+
+/**
+ * Resolve which manifold edge the spiral connects to, plus whether the
+ * canonical spiral must be mirrored so its open ends land at the requested
+ * corner.
+ *
+ * Each corner touches two edges: a horizontal one (start direction `vertical`)
+ * and a vertical one (start direction `horizontal`). The mirror flag keeps the
+ * open ends pinned to the corner while switching between those two edges.
+ */
+function getConnectionEdgeAndMirror(
+  corner: ZoneConnectionCorner,
+  direction: SpiralStartDirection,
+): { edge: ZoneEdge; mirror: boolean } {
+  const vertical = direction === 'vertical';
+
+  switch (corner) {
+    case 'bottom-left':
+      return vertical ? { edge: 'bottom', mirror: false } : { edge: 'left', mirror: true };
+    case 'bottom-right':
+      return vertical ? { edge: 'bottom', mirror: true } : { edge: 'right', mirror: false };
+    case 'top-left':
+      return vertical ? { edge: 'top', mirror: true } : { edge: 'left', mirror: false };
+    case 'top-right':
+      return vertical ? { edge: 'top', mirror: false } : { edge: 'right', mirror: true };
+  }
+}
+
+function getZoneConnection(
+  zone: Zone,
+  manifold: Manifold | null,
+): { hint: Point | undefined; mirror: boolean } {
+  if (zone.polygon.points.length < 3) {
+    return { hint: manifold?.position, mirror: false };
+  }
 
   const bounds = getZoneBounds(zone);
   const insetY = (bounds.minY + bounds.maxY) / 2;
   const insetX = (bounds.minX + bounds.maxX) / 2;
   const far = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, 1000) * 4;
 
-  switch (zone.connectionCorner) {
-    case 'top-left':
-      return { x: bounds.minX - far, y: insetY };
-    case 'top-right':
-      return { x: insetX, y: bounds.minY - far };
-    case 'bottom-right':
-      return { x: bounds.maxX + far, y: insetY };
-    case 'bottom-left':
-      return { x: insetX, y: bounds.maxY + far };
+  const { edge, mirror } = getConnectionEdgeAndMirror(
+    zone.connectionCorner,
+    getZoneStartDirection(zone),
+  );
+
+  switch (edge) {
+    case 'left':
+      return { hint: { x: bounds.minX - far, y: insetY }, mirror };
+    case 'right':
+      return { hint: { x: bounds.maxX + far, y: insetY }, mirror };
+    case 'top':
+      return { hint: { x: insetX, y: bounds.minY - far }, mirror };
+    case 'bottom':
+      return { hint: { x: insetX, y: bounds.maxY + far }, mirror };
   }
 }
 
@@ -173,6 +228,16 @@ function getZoneConnectionCorner(
   return DEFAULT_ZONE_CONNECTION_CORNER;
 }
 
+function getZoneStartDirection(
+  zone: Partial<Pick<Zone, 'startDirection' | 'connectionCorner'>>,
+): SpiralStartDirection {
+  if (zone.startDirection === 'horizontal' || zone.startDirection === 'vertical') {
+    return zone.startDirection;
+  }
+
+  return getDefaultStartDirection(getZoneConnectionCorner(zone));
+}
+
 function toPersistedZone(zone: Zone): PersistedZone {
   return {
     id: zone.id,
@@ -182,6 +247,7 @@ function toPersistedZone(zone: Zone): PersistedZone {
     spacingMm: zone.spacingMm,
     paddingMm: zone.paddingMm,
     connectionCorner: zone.connectionCorner,
+    startDirection: zone.startDirection,
   };
 }
 
@@ -191,9 +257,10 @@ function hydrateZone(zone: Partial<PersistedZone> & Pick<Zone, 'id' | 'name' | '
     name: zone.name,
     color: zone.color,
     polygon: zone.polygon,
-    spacingMm: zone.spacingMm,
     paddingMm: getZonePaddingMm(zone),
     connectionCorner: getZoneConnectionCorner(zone),
+    startDirection: getZoneStartDirection(zone),
+    spacingMm: zone.spacingMm,
     spiral: null,
     spiralLengthM: 0,
     leaderLengthM: 0,
@@ -230,8 +297,8 @@ function recomputeSpiral(
 ): Zone {
   const spacingPx = (zone.spacingMm / 1000) * pixelsPerMeter;
   const paddingPx = (zone.paddingMm / 1000) * pixelsPerMeter;
-  const hint = getZoneConnectionHint(zone, manifold);
-  const spiral = generateSerpentine(zone.polygon, spacingPx, hint, paddingPx);
+  const { hint, mirror } = getZoneConnection(zone, manifold);
+  const spiral = generateSerpentine(zone.polygon, spacingPx, hint, paddingPx, mirror);
   const spiralLengthPx = pathLengthPx(spiral);
   const spiralLengthM = pxToMeters(spiralLengthPx, pixelsPerMeter);
   const areaPx = polygonArea(zone.polygon.points);
@@ -365,6 +432,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
       spacingMm: defaultSpacingMm,
       paddingMm: DEFAULT_ZONE_PADDING_MM,
       connectionCorner: DEFAULT_ZONE_CONNECTION_CORNER,
+      startDirection: DEFAULT_ZONE_START_DIRECTION,
       spiral: null,
       spiralLengthM: 0,
       leaderLengthM: 0,
@@ -404,6 +472,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
       spacingMm: defaultSpacingMm,
       paddingMm: DEFAULT_ZONE_PADDING_MM,
       connectionCorner: DEFAULT_ZONE_CONNECTION_CORNER,
+      startDirection: DEFAULT_ZONE_START_DIRECTION,
       spiral: null,
       spiralLengthM: 0,
       leaderLengthM: 0,
@@ -454,6 +523,19 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
         if (zone.id !== id) return zone;
         return recomputeSpiral(
           { ...zone, connectionCorner: corner },
+          state.manifold,
+          state.pixelsPerMeter,
+        );
+      });
+      return { zones: updated };
+    }),
+
+  updateZoneStartDirection: (id, direction) =>
+    set((state) => {
+      const updated = state.zones.map((zone) => {
+        if (zone.id !== id) return zone;
+        return recomputeSpiral(
+          { ...zone, startDirection: direction },
           state.manifold,
           state.pixelsPerMeter,
         );

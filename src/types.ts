@@ -11,6 +11,15 @@ export type PipePath = Point[];
 
 export type ZoneConnectionCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 
+/**
+ * Which axis the pipe runs along as it leaves the manifold connection.
+ * - `vertical`: the spiral connects on a horizontal edge (top/bottom), so the
+ *   first leg runs up/down.
+ * - `horizontal`: the spiral connects on a vertical edge (left/right), so the
+ *   first leg runs left/right.
+ */
+export type SpiralStartDirection = 'horizontal' | 'vertical';
+
 export interface Zone {
   id: string;
   name: string;
@@ -19,6 +28,7 @@ export interface Zone {
   spacingMm: number;
   paddingMm: number;
   connectionCorner: ZoneConnectionCorner;
+  startDirection: SpiralStartDirection;
   spiral: PipePath | null;
   spiralLengthM: number;
   leaderLengthM: number;

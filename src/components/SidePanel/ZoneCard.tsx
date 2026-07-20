@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Zone, ZoneConnectionCorner } from '../../types';
+import { SpiralStartDirection, Zone, ZoneConnectionCorner } from '../../types';
 import { useStore } from '../../state/store';
 
 interface Props {
@@ -16,6 +16,10 @@ const CORNER_OPTIONS: Array<{ value: ZoneConnectionCorner; label: string }> = [
   { value: 'bottom-left', label: 'Bottom-left' },
   { value: 'bottom-right', label: 'Bottom-right' },
 ];
+const START_DIRECTION_OPTIONS: Array<{ value: SpiralStartDirection; label: string }> = [
+  { value: 'horizontal', label: '↔ Horizontal' },
+  { value: 'vertical', label: '↕ Vertical' },
+];
 
 export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props) {
   const {
@@ -24,6 +28,7 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
     updateZoneSpacing,
     updateZonePadding,
     updateZoneConnectionCorner,
+    updateZoneStartDirection,
     updateZoneName,
     setToolMode,
   } = useStore();
@@ -169,6 +174,25 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
               </option>
             ))}
           </select>
+        </div>
+      </div>
+
+      <div className="zone-spacing">
+        <label>Start:</label>
+        <div className="spacing-presets">
+          {START_DIRECTION_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              className={`btn-preset ${zone.startDirection === option.value ? 'active' : ''}`}
+              title={`Spiral leaves the manifold running ${option.value}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                updateZoneStartDirection(zone.id, option.value);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
       </div>
 

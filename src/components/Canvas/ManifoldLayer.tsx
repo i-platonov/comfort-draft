@@ -51,11 +51,6 @@ export default function ManifoldLayer({ manifold, zones, pixelsPerMeter }: Props
             y: event.target.y(),
           });
         }}
-        onWheel={(event) => {
-          event.evt.preventDefault();
-          const delta = event.evt.deltaY > 0 ? 5 : -5;
-          setManifoldRotation(normalizeAngle((manifold.rotationDeg ?? 0) + delta));
-        }}
       >
         <Rect
           width={width}
