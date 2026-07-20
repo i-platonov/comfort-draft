@@ -6,6 +6,7 @@ const TOOL_OPTIONS: Array<{ mode: ToolMode; label: string }> = [
   { mode: 'placeManifold', label: '🔧 Manifold' },
   { mode: 'drawZone', label: '✏️ Draw Zone' },
   { mode: 'drawRect', label: '▭ Draw Rect' },
+  { mode: 'routeLeader', label: '🔗 Route Leaders' },
 ];
 
 export default function Toolbar() {
@@ -14,7 +15,7 @@ export default function Toolbar() {
   const resetView = useStore((state) => state.resetView);
 
   return (
-    <div className="tool-grid">
+    <div className="top-toolbar-tools">
       {TOOL_OPTIONS.map(({ mode, label }) => (
         <button
           key={mode}

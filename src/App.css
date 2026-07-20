@@ -126,6 +126,41 @@ input {
   flex: 1;
   overflow: hidden;
   position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.top-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0 16px;
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--panel-border);
+  overflow-x: auto;
+}
+
+.top-toolbar-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.toolbar-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toolbar-hint.success {
+  color: var(--success);
+  flex: 0 0 auto;
 }
 
 .btn {
@@ -185,10 +220,11 @@ input {
   background: rgba(231, 76, 60, 0.2);
 }
 
-.tool-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+.top-toolbar-tools {
+  display: flex;
+  align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
 }
 
 .tool-btn {
@@ -378,6 +414,80 @@ input {
 .zone-spacing .spacing-input {
   width: 46px;
   padding: 3px 4px;
+}
+
+.editable-select {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.editable-select input {
+  width: 52px;
+  padding: 3px 4px;
+  background: #0f1a2e;
+  border: 1px solid var(--panel-border);
+  border-right: none;
+  border-radius: 4px 0 0 4px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.editable-select input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.editable-select-toggle {
+  padding: 0 5px;
+  background: #0f1a2e;
+  border: 1px solid var(--panel-border);
+  border-left: 1px solid var(--panel-border);
+  border-radius: 0 4px 4px 0;
+  color: var(--text-muted);
+  font-size: 9px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.editable-select-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.editable-select-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 100%;
+  background: #16213e;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.editable-select-option {
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.editable-select-option:hover {
+  background: #1e3a5f;
+}
+
+.editable-select-option.active {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .zone-select {

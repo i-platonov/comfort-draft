@@ -2,7 +2,6 @@ import { type ChangeEvent, useRef, useState } from 'react';
 import DxfParser from 'dxf-parser';
 import { fitDxfToViewport, parseDxfEntities } from '../../geometry/dxfHelpers';
 import { useStore } from '../../state/store';
-import Toolbar from '../Toolbar';
 import ZoneCard from './ZoneCard';
 
 const IMAGE_ACCEPT = '.png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif';
@@ -29,7 +28,6 @@ export default function SidePanel() {
     zones,
     selectedZoneId,
     manifold,
-    toolMode,
     calibration,
     pixelsPerMeter,
     maxCircuitLengthM,
@@ -229,21 +227,6 @@ export default function SidePanel() {
                 </button>
               </div>
             )}
-          </section>
-
-          <section className="panel-section">
-            <h2>🛠️ Tools</h2>
-            <Toolbar />
-            {toolMode === 'drawZone' && (
-              <p className="info">Click to add points. Double-click or Enter to close.</p>
-            )}
-            {toolMode === 'drawRect' && (
-              <p className="info">Click first corner, then click opposite corner to create a rectangle zone.</p>
-            )}
-            {toolMode === 'placeManifold' && (
-              <p className="info">Click on canvas to place the manifold.</p>
-            )}
-            {manifold && <p className="info success">✓ Manifold placed</p>}
           </section>
 
           <section className="panel-section">

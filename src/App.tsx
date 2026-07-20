@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from 'react';
 import Canvas from './components/Canvas';
 import SidePanel from './components/SidePanel';
+import TopToolbar from './components/TopToolbar';
 import { useStore } from './state/store';
 import './App.css';
 
@@ -8,6 +9,7 @@ export default function App() {
   const toolMode = useStore((state) => state.toolMode);
   const closeZone = useStore((state) => state.closeZone);
   const cancelDrawing = useStore((state) => state.cancelDrawing);
+  const cancelRouting = useStore((state) => state.cancelRouting);
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
@@ -16,10 +18,14 @@ export default function App() {
       }
 
       if (event.key === 'Escape') {
-        cancelDrawing();
+        if (toolMode === 'routeLeader') {
+          cancelRouting();
+        } else {
+          cancelDrawing();
+        }
       }
     },
-    [cancelDrawing, closeZone, toolMode],
+    [cancelDrawing, cancelRouting, closeZone, toolMode],
   );
 
   useEffect(() => {
@@ -31,6 +37,7 @@ export default function App() {
     <div className="app">
       <SidePanel />
       <main className="canvas-area">
+        <TopToolbar />
         <Canvas />
       </main>
     </div>

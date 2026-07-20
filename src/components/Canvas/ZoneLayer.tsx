@@ -1,8 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Konva from 'konva';
 import { Circle, Group, Layer, Line } from 'react-konva';
-import { ToolMode, Zone } from '../../types';
+import { Point, ToolMode, Zone } from '../../types';
 import { useStore } from '../../state/store';
+import { getSpiralStubs } from '../../geometry/spiral';
+import { isAxisAlignedRect, resizeRectFromCorner } from '../../geometry/rect';
 
 const SELECTED_DASH = [6, 6];
 const DASH_PERIOD = SELECTED_DASH.reduce((sum, value) => sum + value, 0);
@@ -41,8 +43,12 @@ interface Props {
 export default function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
   const updateZoneVertex = useStore((state) => state.updateZoneVertex);
   const selectZone = useStore((state) => state.selectZone);
+  const setToolMode = useStore((state) => state.setToolMode);
+  const startRouteZone = useStore((state) => state.startRouteZone);
+  const routing = useStore((state) => state.routing);
   const selectedLineRefWhite = useRef<Konva.Line | null>(null);
   const selectedLineRefBlack = useRef<Konva.Line | null>(null);
+  const [dragPreview, setDragPreview] = useState<{ zoneId: string; points: Point[] } | null>(null);
 
   useEffect(() => {
     const whiteNode = selectedLineRefWhite.current;
@@ -66,7 +72,9 @@ export default function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
     <Layer>
       {zones.map((zone) => {
         const isSelected = zone.id === selectedZoneId;
-        const points = zone.polygon.points.flatMap((point) => [point.x, point.y]);
+        const displayPoints =
+          dragPreview && dragPreview.zoneId === zone.id ? dragPreview.points : zone.polygon.points;
+        const points = displayPoints.flatMap((point) => [point.x, point.y]);
         const zoneBorderColor = mixHexColors(zone.color, '#000000', 0.18);
 
         return (
@@ -78,7 +86,29 @@ export default function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
               stroke={isSelected ? undefined : zoneBorderColor}
               strokeWidth={1.5}
               dash={isSelected ? undefined : [8, 4]}
-              onClick={() => selectZone(zone.id)}
+              onClick={(event) => {
+                if (toolMode === 'routeLeader') {
+                  if (!routing) {
+                    startRouteZone(zone.id);
+                    event.cancelBubble = true;
+                  }
+                  // While a leg is already in progress, let the click bubble to
+                  // the Stage so it's treated as a normal elbow point.
+                  return;
+                }
+                selectZone(zone.id);
+                if (toolMode === 'select' || toolMode === 'editBoundary') {
+                  // Keep this click from also reaching the Stage's "clicked empty
+                  // space" deselect handler.
+                  event.cancelBubble = true;
+                }
+              }}
+              onDblClick={(event) => {
+                if (toolMode !== 'select' && toolMode !== 'editBoundary') return;
+                event.cancelBubble = true;
+                selectZone(zone.id);
+                setToolMode('editBoundary');
+              }}
               onTap={() => selectZone(zone.id)}
             />
 
@@ -115,9 +145,39 @@ export default function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
               />
             )}
 
+            {toolMode === 'routeLeader' &&
+              zone.spiral &&
+              zone.spiral.length > 1 &&
+              (() => {
+                const stubs = getSpiralStubs(zone.spiral);
+                if (!stubs) return null;
+                return (
+                  <>
+                    <Circle
+                      x={stubs.start.x}
+                      y={stubs.start.y}
+                      radius={4}
+                      fill={zone.supplyLeaderWaypoints ? '#2ecc71' : '#f39c12'}
+                      stroke="#0f0f1a"
+                      strokeWidth={1}
+                      listening={false}
+                    />
+                    <Circle
+                      x={stubs.end.x}
+                      y={stubs.end.y}
+                      radius={4}
+                      fill={zone.returnLeaderWaypoints ? '#2ecc71' : '#f39c12'}
+                      stroke="#0f0f1a"
+                      strokeWidth={1}
+                      listening={false}
+                    />
+                  </>
+                );
+              })()}
+
             {isSelected &&
               toolMode === 'editBoundary' &&
-              zone.polygon.points.map((point, vertexIndex) => (
+              displayPoints.map((point, vertexIndex) => (
                 <Circle
                   key={vertexIndex}
                   x={point.x}
@@ -127,11 +187,23 @@ export default function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
                   stroke={zoneBorderColor}
                   strokeWidth={2}
                   draggable
+                  onClick={(event) => {
+                    event.cancelBubble = true;
+                  }}
+                  onDragMove={(event) => {
+                    const pos = { x: event.target.x(), y: event.target.y() };
+                    const nextPoints = isAxisAlignedRect(zone.polygon.points)
+                      ? resizeRectFromCorner(zone.polygon.points, vertexIndex, pos)
+                      : zone.polygon.points.map((p, i) => (i === vertexIndex ? pos : p));
+                    setDragPreview({ zoneId: zone.id, points: nextPoints });
+                  }}
                   onDragEnd={(event) => {
+                    event.cancelBubble = true;
                     updateZoneVertex(zone.id, vertexIndex, {
                       x: event.target.x(),
                       y: event.target.y(),
                     });
+                    setDragPreview(null);
                   }}
                 />
               ))}

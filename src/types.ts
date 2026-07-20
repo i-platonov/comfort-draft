@@ -33,6 +33,19 @@ export interface Zone {
   spiralLengthM: number;
   leaderLengthM: number;
   areaM2: number;
+  /**
+   * Manually-drawn leader waypoints (interior elbows only — not including the
+   * spiral stub or the manifold port, which are resolved dynamically at
+   * render/length-calc time). `null` means that leg hasn't been routed yet.
+   */
+  supplyLeaderWaypoints: Point[] | null;
+  returnLeaderWaypoints: Point[] | null;
+  /**
+   * Position along the manifold's tangent axis (offset in px from the
+   * manifold's center) where this zone's supply/return pair connects — chosen
+   * by the user by clicking the manifold while routing. `null` until routed.
+   */
+  manifoldPortOffsetPx: number | null;
 }
 
 export interface Manifold {
@@ -40,7 +53,24 @@ export interface Manifold {
   rotationDeg?: number;
 }
 
-export type ToolMode = 'select' | 'placeManifold' | 'drawZone' | 'drawRect' | 'editBoundary';
+export type ToolMode =
+  | 'select'
+  | 'placeManifold'
+  | 'drawZone'
+  | 'drawRect'
+  | 'editBoundary'
+  | 'routeLeader';
+
+/**
+ * In-progress manual leader routing session for a single zone. The user
+ * draws one shared path (anchored at the spiral's supply stub); the return
+ * leg is derived automatically as a parallel offset of it.
+ */
+export interface LeaderRoutingState {
+  zoneId: string;
+  /** Committed elbow points for the supply path currently being drawn. */
+  points: Point[];
+}
 
 export interface DxfEntity {
   type: string;

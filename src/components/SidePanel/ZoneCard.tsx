@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { SpiralStartDirection, Zone, ZoneConnectionCorner } from '../../types';
 import { useStore } from '../../state/store';
+import EditableSelect from './EditableSelect';
 
 interface Props {
   zone: Zone;
@@ -104,26 +105,12 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
       <div className="zone-spacing">
         <label>Spacing:</label>
         <div className="spacing-presets">
-          {SPACING_PRESETS.map((spacing) => (
-            <button
-              key={spacing}
-              className={`btn-preset ${zone.spacingMm === spacing ? 'active' : ''}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                updateZoneSpacing(zone.id, spacing);
-              }}
-            >
-              {spacing}
-            </button>
-          ))}
-          <input
-            type="number"
+          <EditableSelect
+            value={zone.spacingMm}
+            presets={SPACING_PRESETS}
             min={50}
             max={500}
-            value={zone.spacingMm}
-            onChange={(event) => updateZoneSpacing(zone.id, Number(event.target.value))}
-            className="spacing-input"
-            onClick={(event) => event.stopPropagation()}
+            onChange={(value) => updateZoneSpacing(zone.id, value)}
           />
           <span>mm</span>
         </div>
@@ -132,26 +119,12 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
       <div className="zone-spacing">
         <label>Padding:</label>
         <div className="spacing-presets">
-          {PADDING_PRESETS.map((padding) => (
-            <button
-              key={padding}
-              className={`btn-preset ${zone.paddingMm === padding ? 'active' : ''}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                updateZonePadding(zone.id, padding);
-              }}
-            >
-              {padding}
-            </button>
-          ))}
-          <input
-            type="number"
+          <EditableSelect
+            value={zone.paddingMm}
+            presets={PADDING_PRESETS}
             min={0}
             max={1000}
-            value={zone.paddingMm}
-            onChange={(event) => updateZonePadding(zone.id, Number(event.target.value))}
-            className="spacing-input"
-            onClick={(event) => event.stopPropagation()}
+            onChange={(value) => updateZonePadding(zone.id, value)}
           />
           <span>mm</span>
         </div>

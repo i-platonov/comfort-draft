@@ -3,6 +3,7 @@ import { createJSONStorage, persist, type PersistOptions } from 'zustand/middlew
 import {
   Background,
   CalibrationState,
+  LeaderRoutingState,
   Manifold,
   Point,
   SpiralStartDirection,
@@ -11,8 +12,26 @@ import {
   ZoneConnectionCorner,
 } from '../types';
 import { generateSerpentine, getSpiralStubs } from '../geometry/spiral';
-import { leaderLengthPx, pathLengthPx, pxToMeters } from '../geometry/length';
+import { pathLengthPx, pxToMeters } from '../geometry/length';
 import { polygonArea } from '../geometry/offset';
+import {
+  getManifoldLayout,
+  getZoneManifoldPorts,
+  projectPointOntoManifold,
+  snapToNearestManifoldOffset,
+} from '../geometry/manifoldRouting';
+import { isAxisAlignedRect, resizeRectFromCorner } from '../geometry/rect';
+import {
+  computeTwinLeaderWaypoints,
+  getStubExitDirection,
+  isPointOnManifold,
+  reflowLeaderPath,
+  snapElbowPoint,
+  snapFirstLegPoint,
+} from '../geometry/manualRouting';
+
+const MANIFOLD_CLICK_MARGIN_PX = 10;
+const MIN_LEADER_SEGMENT_PX = 15;
 
 const ZONE_COLORS = [
   '#e74c3c',
@@ -57,6 +76,8 @@ interface StoreState {
   drawingPoints: Point[];
   /** First corner for rectangle-zone drawing */
   drawRectStart: Point | null;
+  /** In-progress manual leader-routing session, if any */
+  routing: LeaderRoutingState | null;
   calibration: CalibrationState;
   stageScale: number;
   stageX: number;
@@ -83,6 +104,16 @@ interface StoreState {
   updateZoneStartDirection: (id: string, direction: SpiralStartDirection) => void;
   updateZoneName: (id: string, name: string) => void;
   updateZoneVertex: (zoneId: string, vertexIdx: number, pt: Point) => void;
+  /** Begin (or restart) manual leader routing for a zone. */
+  startRouteZone: (zoneId: string) => void;
+  /** Add a click to the in-progress supply path; finishes both legs automatically if the click lands on the manifold. */
+  addRoutePoint: (pt: Point) => void;
+  /** Commit the drawn supply path (finishing at the manifold point the user clicked) and derive the return leg as its parallel offset. */
+  finishRouting: (clickPos: Point) => void;
+  /** Abandon the in-progress route without saving it. */
+  cancelRouting: () => void;
+  /** Drag a single waypoint of an already-drawn leader leg; adjacent bends are repaired to stay orthogonal. */
+  updateLeaderWaypoint: (zoneId: string, leg: 'supply' | 'return', waypointIndex: number, pt: Point) => void;
   setPixelsPerMeter: (ppm: number) => void;
   setMaxCircuitLength: (m: number) => void;
   setDefaultSpacing: (mm: number) => void;
@@ -97,7 +128,17 @@ interface StoreState {
 
 export type PersistedZone = Pick<
   Zone,
-  'id' | 'name' | 'color' | 'polygon' | 'spacingMm' | 'paddingMm' | 'connectionCorner' | 'startDirection'
+  | 'id'
+  | 'name'
+  | 'color'
+  | 'polygon'
+  | 'spacingMm'
+  | 'paddingMm'
+  | 'connectionCorner'
+  | 'startDirection'
+  | 'supplyLeaderWaypoints'
+  | 'returnLeaderWaypoints'
+  | 'manifoldPortOffsetPx'
 >;
 
 export interface PersistedStoreState {
@@ -115,23 +156,68 @@ let zoneCounter = 1;
 
 function createTransientState(): Pick<
   StoreState,
-  'selectedZoneId' | 'toolMode' | 'drawingPoints' | 'drawRectStart' | 'calibration'
+  'selectedZoneId' | 'toolMode' | 'drawingPoints' | 'drawRectStart' | 'routing' | 'calibration'
 > {
   return {
     selectedZoneId: null,
     toolMode: 'select',
     drawingPoints: [],
     drawRectStart: null,
+    routing: null,
     calibration: { active: false, point1: null, point2: null },
   };
 }
 
+/**
+ * Recompute spirals for freshly-hydrated zones, keeping their persisted manual
+ * leader waypoints intact, then re-derive `leaderLengthM` (also derived data,
+ * not persisted) from those waypoints against the current stub/port geometry.
+ */
 function recomputeZones(
   zones: Zone[],
   manifold: Manifold | null,
   pixelsPerMeter: number,
 ): Zone[] {
-  return zones.map((zone) => recomputeSpiral(zone, manifold, pixelsPerMeter));
+  const withSpirals = zones.map((zone) =>
+    recomputeSpiral(zone, manifold, pixelsPerMeter, { preserveLeaderRouting: true }),
+  );
+
+  if (!manifold) return withSpirals;
+
+  return withSpirals.map((zone) => {
+    if (!zone.supplyLeaderWaypoints && !zone.returnLeaderWaypoints) return zone;
+    const stubs = zone.spiral ? getSpiralStubs(zone.spiral) : null;
+    const pair = getZoneManifoldPorts(manifold, zone, pixelsPerMeter);
+    if (!stubs || !pair) return { ...zone, leaderLengthM: 0 };
+
+    let totalPx = 0;
+    if (zone.supplyLeaderWaypoints) {
+      totalPx += pathLengthPx([stubs.start, ...zone.supplyLeaderWaypoints, pair.supplyPort]);
+    }
+    if (zone.returnLeaderWaypoints) {
+      totalPx += pathLengthPx([stubs.end, ...zone.returnLeaderWaypoints, pair.returnPort]);
+    }
+    return { ...zone, leaderLengthM: pxToMeters(totalPx, pixelsPerMeter) };
+  });
+}
+
+/** Clear a zone's manual leader routing (and chosen manifold outlet) — used whenever the manifold or spiral geometry moves. */
+function clearZoneLeaderRouting(zone: Zone): Zone {
+  if (
+    zone.supplyLeaderWaypoints === null &&
+    zone.returnLeaderWaypoints === null &&
+    zone.manifoldPortOffsetPx === null &&
+    zone.leaderLengthM === 0
+  ) {
+    return zone;
+  }
+  return {
+    ...zone,
+    supplyLeaderWaypoints: null,
+    returnLeaderWaypoints: null,
+    manifoldPortOffsetPx: null,
+    leaderLengthM: 0,
+  };
 }
 
 function getZoneBounds(zone: Zone) {
@@ -248,6 +334,9 @@ function toPersistedZone(zone: Zone): PersistedZone {
     paddingMm: zone.paddingMm,
     connectionCorner: zone.connectionCorner,
     startDirection: zone.startDirection,
+    supplyLeaderWaypoints: zone.supplyLeaderWaypoints,
+    returnLeaderWaypoints: zone.returnLeaderWaypoints,
+    manifoldPortOffsetPx: zone.manifoldPortOffsetPx,
   };
 }
 
@@ -265,6 +354,9 @@ function hydrateZone(zone: Partial<PersistedZone> & Pick<Zone, 'id' | 'name' | '
     spiralLengthM: 0,
     leaderLengthM: 0,
     areaM2: 0,
+    supplyLeaderWaypoints: Array.isArray(zone.supplyLeaderWaypoints) ? zone.supplyLeaderWaypoints : null,
+    returnLeaderWaypoints: Array.isArray(zone.returnLeaderWaypoints) ? zone.returnLeaderWaypoints : null,
+    manifoldPortOffsetPx: Number.isFinite(zone.manifoldPortOffsetPx) ? (zone.manifoldPortOffsetPx as number) : null,
   };
 }
 
@@ -290,10 +382,17 @@ function normalizeManifold(manifold: Manifold | null): Manifold | null {
   };
 }
 
+/**
+ * Recompute a zone's spiral. Leader routing is manual, so any geometry change
+ * that could move the spiral's stubs invalidates the previously-drawn leader
+ * paths — unless `preserveLeaderRouting` is set (used only when hydrating
+ * from storage, where the saved routes should survive a reload).
+ */
 function recomputeSpiral(
   zone: Zone,
   manifold: Manifold | null,
   pixelsPerMeter: number,
+  options: { preserveLeaderRouting?: boolean } = {},
 ): Zone {
   const spacingPx = (zone.spacingMm / 1000) * pixelsPerMeter;
   const paddingPx = (zone.paddingMm / 1000) * pixelsPerMeter;
@@ -304,18 +403,20 @@ function recomputeSpiral(
   const areaPx = polygonArea(zone.polygon.points);
   const areaM2 = pixelsPerMeter > 0 ? areaPx / (pixelsPerMeter * pixelsPerMeter) : 0;
 
-  let leaderLengthM = 0;
-  if (manifold && spiral.length > 0) {
-    const stubs = getSpiralStubs(spiral);
-    if (stubs) {
-      const leaderLength =
-        leaderLengthPx(stubs.start, manifold.position) +
-        leaderLengthPx(stubs.end, manifold.position);
-      leaderLengthM = pxToMeters(leaderLength, pixelsPerMeter);
-    }
+  if (options.preserveLeaderRouting) {
+    return { ...zone, spiral, spiralLengthM, areaM2 };
   }
 
-  return { ...zone, spiral, spiralLengthM, leaderLengthM, areaM2 };
+  return {
+    ...zone,
+    spiral,
+    spiralLengthM,
+    areaM2,
+    supplyLeaderWaypoints: null,
+    returnLeaderWaypoints: null,
+    manifoldPortOffsetPx: null,
+    leaderLengthM: 0,
+  };
 }
 
 /** Build a rectangular polygon from two opposite corners */
@@ -329,6 +430,7 @@ function rectPolygon(a: Point, b: Point) {
     ],
   };
 }
+
 
 export function partializeStoreState(state: StoreState): PersistedStoreState {
   return {
@@ -385,11 +487,11 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
 
   setBackground: (bg) => set({ background: bg }),
 
-  setToolMode: (mode) => set({ toolMode: mode, drawingPoints: [], drawRectStart: null }),
+  setToolMode: (mode) => set({ toolMode: mode, drawingPoints: [], drawRectStart: null, routing: null }),
 
   setManifold: (pos) => {
     const previousRotation = get().manifold?.rotationDeg ?? 0;
-    set({ manifold: { position: pos, rotationDeg: previousRotation }, toolMode: 'select' });
+    set({ manifold: { position: pos, rotationDeg: previousRotation }, toolMode: 'select', routing: null });
     const { zones, pixelsPerMeter } = get();
     const updated = zones.map((zone) =>
       recomputeSpiral(zone, { position: pos, rotationDeg: previousRotation }, pixelsPerMeter),
@@ -399,7 +501,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
 
   updateManifoldPosition: (pos) => {
     const rotationDeg = get().manifold?.rotationDeg ?? 0;
-    set({ manifold: { position: pos, rotationDeg } });
+    set({ manifold: { position: pos, rotationDeg }, routing: null });
     const { zones, pixelsPerMeter } = get();
     const updated = zones.map((zone) =>
       recomputeSpiral(zone, { position: pos, rotationDeg }, pixelsPerMeter),
@@ -410,7 +512,11 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   setManifoldRotation: (rotationDeg) => {
     const manifold = get().manifold;
     if (!manifold) return;
-    set({ manifold: { ...manifold, rotationDeg: normalizeRotation(rotationDeg) } });
+    set({
+      manifold: { ...manifold, rotationDeg: normalizeRotation(rotationDeg) },
+      routing: null,
+      zones: get().zones.map(clearZoneLeaderRouting),
+    });
   },
 
   addDrawingPoint: (pt) => set((state) => ({ drawingPoints: [...state.drawingPoints, pt] })),
@@ -437,6 +543,9 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
       spiralLengthM: 0,
       leaderLengthM: 0,
       areaM2: 0,
+      supplyLeaderWaypoints: null,
+      returnLeaderWaypoints: null,
+      manifoldPortOffsetPx: null,
     };
 
     const computed = recomputeSpiral(newZone, manifold, pixelsPerMeter);
@@ -477,6 +586,9 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
       spiralLengthM: 0,
       leaderLengthM: 0,
       areaM2: 0,
+      supplyLeaderWaypoints: null,
+      returnLeaderWaypoints: null,
+      manifoldPortOffsetPx: null,
     };
 
     const computed = recomputeSpiral(newZone, manifold, pixelsPerMeter);
@@ -552,11 +664,134 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     const { zones, manifold, pixelsPerMeter } = get();
     const updated = zones.map((zone) => {
       if (zone.id !== zoneId) return zone;
-      const points = [...zone.polygon.points];
-      points[vertexIdx] = pt;
+      const originalPoints = zone.polygon.points;
+      let points: Point[];
+      if (isAxisAlignedRect(originalPoints)) {
+        points = resizeRectFromCorner(originalPoints, vertexIdx, pt);
+      } else {
+        points = [...originalPoints];
+        points[vertexIdx] = pt;
+      }
       return recomputeSpiral({ ...zone, polygon: { points } }, manifold, pixelsPerMeter);
     });
     set({ zones: updated });
+  },
+
+  startRouteZone: (zoneId) => {
+    const zone = get().zones.find((candidate) => candidate.id === zoneId);
+    if (!zone || !zone.spiral || zone.spiral.length < 2) return;
+
+    const zones = get().zones.map((candidate) =>
+      candidate.id === zoneId ? clearZoneLeaderRouting(candidate) : candidate,
+    );
+    set({
+      zones,
+      routing: { zoneId, points: [] },
+      selectedZoneId: zoneId,
+    });
+  },
+
+  addRoutePoint: (rawPt) => {
+    const { routing, zones, manifold, pixelsPerMeter } = get();
+    if (!routing || !manifold) return;
+    const zone = zones.find((candidate) => candidate.id === routing.zoneId);
+    if (!zone || !zone.spiral) return;
+
+    const layout = getManifoldLayout(manifold, zones, pixelsPerMeter);
+    if (isPointOnManifold(rawPt, manifold, layout, MANIFOLD_CLICK_MARGIN_PX)) {
+      get().finishRouting(rawPt);
+      return;
+    }
+
+    const stubs = getSpiralStubs(zone.spiral);
+    if (!stubs) return;
+
+    const snapped =
+      routing.points.length === 0
+        ? snapFirstLegPoint(
+            stubs.start,
+            getStubExitDirection(zone.spiral, 'start'),
+            rawPt,
+            MIN_LEADER_SEGMENT_PX,
+          )
+        : snapElbowPoint(routing.points[routing.points.length - 1], rawPt);
+
+    set({ routing: { ...routing, points: [...routing.points, snapped] } });
+  },
+
+  finishRouting: (clickPos) => {
+    const { routing, zones, manifold, pixelsPerMeter } = get();
+    if (!routing || !manifold) return;
+    const zone = zones.find((candidate) => candidate.id === routing.zoneId);
+    if (!zone || !zone.spiral) return;
+    const stubs = getSpiralStubs(zone.spiral);
+    if (!stubs) return;
+
+    // The user picks the outlet by clicking it directly, snapped to the nearest slot.
+    const rawOffsetPx = projectPointOntoManifold(manifold, clickPos);
+    const manifoldPortOffsetPx = snapToNearestManifoldOffset(manifold, zones, pixelsPerMeter, rawOffsetPx);
+    const pair = getZoneManifoldPorts(manifold, { ...zone, manifoldPortOffsetPx }, pixelsPerMeter);
+    if (!pair) return;
+
+    const { supplyWaypoints, returnWaypoints } = computeTwinLeaderWaypoints(
+      zone.spiral,
+      routing.points,
+      pair.supplyPort,
+      pair.returnPort,
+    );
+
+    const leaderLengthPxTotal =
+      pathLengthPx([stubs.start, ...supplyWaypoints, pair.supplyPort]) +
+      pathLengthPx([stubs.end, ...returnWaypoints, pair.returnPort]);
+
+    const updatedZone: Zone = {
+      ...zone,
+      supplyLeaderWaypoints: supplyWaypoints,
+      returnLeaderWaypoints: returnWaypoints,
+      manifoldPortOffsetPx,
+      leaderLengthM: pxToMeters(leaderLengthPxTotal, pixelsPerMeter),
+    };
+    const updatedZones = zones.map((candidate) => (candidate.id === zone.id ? updatedZone : candidate));
+
+    set({ zones: updatedZones, routing: null });
+  },
+
+  cancelRouting: () => set({ routing: null }),
+
+  updateLeaderWaypoint: (zoneId, leg, waypointIndex, pt) => {
+    const { zones, manifold, pixelsPerMeter } = get();
+    if (!manifold) return;
+    const zone = zones.find((candidate) => candidate.id === zoneId);
+    if (!zone || !zone.spiral) return;
+    const stubs = getSpiralStubs(zone.spiral);
+    if (!stubs) return;
+
+    const isSupply = leg === 'supply';
+    const waypoints = isSupply ? zone.supplyLeaderWaypoints : zone.returnLeaderWaypoints;
+    if (!waypoints) return;
+
+    const pair = getZoneManifoldPorts(manifold, zone, pixelsPerMeter);
+    if (!pair) return;
+
+    const anchor = isSupply ? stubs.start : stubs.end;
+    const port = isSupply ? pair.supplyPort : pair.returnPort;
+    const updatedWaypoints = waypoints.map((point, i) => (i === waypointIndex ? pt : point));
+    const fullPath = reflowLeaderPath([anchor, ...updatedWaypoints, port]);
+    const newWaypoints = fullPath.slice(1, -1);
+
+    const otherWaypoints = isSupply ? zone.returnLeaderWaypoints : zone.supplyLeaderWaypoints;
+    const otherAnchor = isSupply ? stubs.end : stubs.start;
+    const otherPort = isSupply ? pair.returnPort : pair.supplyPort;
+    const otherLegPx = otherWaypoints ? pathLengthPx([otherAnchor, ...otherWaypoints, otherPort]) : 0;
+    const thisLegPx = pathLengthPx(fullPath);
+
+    const updatedZone: Zone = {
+      ...zone,
+      supplyLeaderWaypoints: isSupply ? newWaypoints : zone.supplyLeaderWaypoints,
+      returnLeaderWaypoints: isSupply ? zone.returnLeaderWaypoints : newWaypoints,
+      leaderLengthM: pxToMeters(thisLegPx + otherLegPx, pixelsPerMeter),
+    };
+    set({ zones: zones.map((candidate) => (candidate.id === zoneId ? updatedZone : candidate)) });
   },
 
   setPixelsPerMeter: (ppm) => {

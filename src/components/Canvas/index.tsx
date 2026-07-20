@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Konva from 'konva';
-import { Circle, Layer, Line, Rect, Stage, Text } from 'react-konva';
+import { Arrow, Circle, Layer, Line, Rect, Stage, Text } from 'react-konva';
 import { useStore } from '../../state/store';
+import { getSpiralStubs } from '../../geometry/spiral';
+import {
+  computeTwinPreviewPaths,
+  getStubExitDirection,
+  snapElbowPoint,
+  snapFirstLegPoint,
+} from '../../geometry/manualRouting';
 import DxfLayer from './DxfLayer';
 import ImageLayer from './ImageLayer';
 import LeaderLayer from './LeaderLayer';
@@ -9,13 +16,14 @@ import ManifoldLayer from './ManifoldLayer';
 import ZoneLayer from './ZoneLayer';
 
 const PANEL_WIDTH = 320;
+const TOP_TOOLBAR_HEIGHT = 44;
 const ZOOM_FACTOR = 1.15;
 
 export default function Canvas() {
   const stageRef = useRef<Konva.Stage>(null);
   const [viewport, setViewport] = useState({
     width: Math.max(window.innerWidth - PANEL_WIDTH, 320),
-    height: window.innerHeight,
+    height: window.innerHeight - TOP_TOOLBAR_HEIGHT,
   });
   // Live mouse position for rect-zone preview (in stage/world coords)
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
@@ -28,6 +36,7 @@ export default function Canvas() {
     toolMode,
     drawingPoints,
     drawRectStart,
+    routing,
     calibration,
     pixelsPerMeter,
     stageScale,
@@ -38,15 +47,18 @@ export default function Canvas() {
     closeZone,
     startDrawRect,
     finishDrawRect,
+    addRoutePoint,
     addCalibrationPoint,
     setStageTransform,
+    selectZone,
+    setToolMode,
   } = useStore();
 
   useEffect(() => {
     const handleResize = () => {
       setViewport({
         width: Math.max(window.innerWidth - PANEL_WIDTH, 320),
-        height: window.innerHeight,
+        height: window.innerHeight - TOP_TOOLBAR_HEIGHT,
       });
     };
 
@@ -91,17 +103,37 @@ export default function Canvas() {
       return;
     }
 
+    if (toolMode === 'routeLeader') {
+      if (routing) {
+        addRoutePoint(position);
+      }
+      return;
+    }
+
     if (calibration.active) {
       addCalibrationPoint(position);
+      return;
+    }
+
+    // Clicked empty canvas: finalize any boundary edit and deselect.
+    if (toolMode === 'select' || toolMode === 'editBoundary') {
+      selectZone(null);
+      if (toolMode === 'editBoundary') {
+        setToolMode('select');
+      }
     }
   }, [
     addCalibrationPoint,
     addDrawingPoint,
+    addRoutePoint,
     calibration.active,
     drawRectStart,
     finishDrawRect,
     getPointerPos,
+    routing,
+    selectZone,
     setManifold,
+    setToolMode,
     startDrawRect,
     toolMode,
   ]);
@@ -113,10 +145,16 @@ export default function Canvas() {
   }, [closeZone, toolMode]);
 
   const handleMouseMove = useCallback(() => {
-    if (toolMode !== 'drawRect' || !drawRectStart) return;
-    const pos = getPointerPos();
-    if (pos) setMousePos(pos);
-  }, [drawRectStart, getPointerPos, toolMode]);
+    if (toolMode === 'drawRect' && drawRectStart) {
+      const pos = getPointerPos();
+      if (pos) setMousePos(pos);
+      return;
+    }
+    if (toolMode === 'routeLeader' && routing) {
+      const pos = getPointerPos();
+      if (pos) setMousePos(pos);
+    }
+  }, [drawRectStart, getPointerPos, routing, toolMode]);
 
   const handleWheel = useCallback(
     (event: Konva.KonvaEventObject<WheelEvent>) => {
@@ -150,9 +188,33 @@ export default function Canvas() {
     calibration.active ||
     toolMode === 'drawZone' ||
     toolMode === 'drawRect' ||
-    toolMode === 'placeManifold'
+    toolMode === 'placeManifold' ||
+    toolMode === 'routeLeader'
       ? 'crosshair'
       : 'default';
+
+  // Live preview of both leader paths (supply as drawn, return as its offset) while routing.
+  const routePreview = (() => {
+    if (!routing || !mousePos) return null;
+    const zone = zones.find((candidate) => candidate.id === routing.zoneId);
+    if (!zone || !zone.spiral) return null;
+    const stubs = getSpiralStubs(zone.spiral);
+    if (!stubs) return null;
+
+    const previewPoint =
+      routing.points.length === 0
+        ? snapFirstLegPoint(stubs.start, getStubExitDirection(zone.spiral, 'start'), mousePos)
+        : snapElbowPoint(routing.points[routing.points.length - 1], mousePos);
+
+    const preview = computeTwinPreviewPaths(zone.spiral, [...routing.points, previewPoint]);
+    if (!preview) return null;
+
+    return {
+      supplyPath: preview.supplyPath,
+      returnPath: preview.returnPath,
+      color: zone.color,
+    };
+  })();
 
   // Rectangle preview while in drawRect mode
   const rectPreview =
@@ -185,6 +247,10 @@ export default function Canvas() {
       scaleX={stageScale}
       scaleY={stageScale}
       onDragEnd={(event) => {
+        // Dragend bubbles up from any draggable descendant (vertex handles,
+        // the manifold, ...) with event.target left as that node — only
+        // react when the Stage itself was the thing being dragged (panning).
+        if (event.target !== stageRef.current) return;
         setStageTransform(stageScale, event.target.x(), event.target.y());
       }}
       style={{ cursor, background: '#1a1a2e' }}
@@ -228,6 +294,37 @@ export default function Canvas() {
                 fill="#f39c12"
                 listening={false}
               />
+            ))}
+          </>
+        )}
+
+        {/* Manual leader-routing preview: supply as drawn, return as its live offset */}
+        {routePreview && (
+          <>
+            <Arrow
+              points={routePreview.supplyPath.flatMap((point) => [point.x, point.y])}
+              stroke={routePreview.color}
+              strokeWidth={2}
+              fill={routePreview.color}
+              pointerLength={8}
+              pointerWidth={6}
+              opacity={0.9}
+              dash={[6, 3]}
+              listening={false}
+            />
+            <Arrow
+              points={routePreview.returnPath.flatMap((point) => [point.x, point.y])}
+              stroke={routePreview.color}
+              strokeWidth={2}
+              fill={routePreview.color}
+              pointerLength={8}
+              pointerWidth={6}
+              opacity={0.5}
+              dash={[3, 3]}
+              listening={false}
+            />
+            {routePreview.supplyPath.slice(0, -1).map((point, index) => (
+              <Circle key={index} x={point.x} y={point.y} radius={3} fill={routePreview.color} listening={false} />
             ))}
           </>
         )}
