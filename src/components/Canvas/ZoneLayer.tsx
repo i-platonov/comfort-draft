@@ -1,6 +1,11 @@
+import { useEffect, useRef } from 'react';
+import Konva from 'konva';
 import { Circle, Group, Layer, Line } from 'react-konva';
 import { ToolMode, Zone } from '../../types';
 import { useStore } from '../../state/store';
+
+const SELECTED_DASH = [6, 6];
+const DASH_PERIOD = SELECTED_DASH.reduce((sum, value) => sum + value, 0);
 
 function mixHexColors(color: string, target: string, amount: number): string {
   const normalized = color.replace('#', '');
@@ -36,6 +41,26 @@ interface Props {
 export default function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
   const updateZoneVertex = useStore((state) => state.updateZoneVertex);
   const selectZone = useStore((state) => state.selectZone);
+  const selectedLineRefWhite = useRef<Konva.Line | null>(null);
+  const selectedLineRefBlack = useRef<Konva.Line | null>(null);
+
+  useEffect(() => {
+    const whiteNode = selectedLineRefWhite.current;
+    const blackNode = selectedLineRefBlack.current;
+    if (!whiteNode || !blackNode) return;
+
+    const anim = new Konva.Animation((frame) => {
+      if (!frame) return;
+      const offset = -(frame.time / 30) % DASH_PERIOD;
+      whiteNode.dashOffset(offset);
+      blackNode.dashOffset(offset + DASH_PERIOD / 2);
+    }, whiteNode.getLayer());
+    anim.start();
+
+    return () => {
+      anim.stop();
+    };
+  }, [selectedZoneId]);
 
   return (
     <Layer>
@@ -50,12 +75,35 @@ export default function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
               points={points}
               closed
               fill={`${zone.color}33`}
-              stroke={zoneBorderColor}
-              strokeWidth={isSelected ? 2.5 : 1.5}
-              dash={isSelected ? [10, 5] : [8, 4]}
+              stroke={isSelected ? undefined : zoneBorderColor}
+              strokeWidth={1.5}
+              dash={isSelected ? undefined : [8, 4]}
               onClick={() => selectZone(zone.id)}
               onTap={() => selectZone(zone.id)}
             />
+
+            {isSelected && (
+              <>
+                <Line
+                  ref={selectedLineRefWhite}
+                  points={points}
+                  closed
+                  stroke="#ffffff"
+                  strokeWidth={2.5}
+                  dash={SELECTED_DASH}
+                  listening={false}
+                />
+                <Line
+                  ref={selectedLineRefBlack}
+                  points={points}
+                  closed
+                  stroke="#000000"
+                  strokeWidth={2.5}
+                  dash={SELECTED_DASH}
+                  listening={false}
+                />
+              </>
+            )}
 
             {zone.spiral && zone.spiral.length > 1 && (
               <Line

@@ -75,6 +75,39 @@ input {
   color: var(--accent);
 }
 
+.side-panel-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--panel-border);
+  background: #0d1b33;
+}
+
+.side-panel-tab {
+  flex: 1;
+  padding: 10px 8px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.side-panel-tab:hover {
+  color: var(--text);
+}
+
+.side-panel-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.side-panel-tab-content {
+  display: flex;
+  flex-direction: column;
+}
+
 .panel-section {
   padding: 14px 16px;
   border-bottom: 1px solid var(--panel-border);
@@ -268,8 +301,8 @@ input {
 .zone-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: 50vh;
+  gap: 6px;
+  max-height: 70vh;
   overflow-y: auto;
 }
 
@@ -278,20 +311,22 @@ input {
   border: 1px solid var(--panel-border);
   border-left: 4px solid var(--accent);
   border-radius: 6px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   cursor: pointer;
   transition: border-color 0.15s;
 }
 
 .zone-card.selected {
+  background: #1a2f52;
   border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .zone-card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 5px;
 }
 
 .zone-name {
@@ -316,28 +351,51 @@ input {
 }
 
 .zone-spacing {
-  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
 }
 
 .zone-spacing label {
   font-size: 11px;
   color: var(--text-muted);
-  display: block;
-  margin-bottom: 4px;
+  flex: 0 0 62px;
 }
 
 .spacing-presets {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   flex-wrap: wrap;
+  flex: 1;
+}
+
+.zone-spacing .btn-preset {
+  padding: 2px 6px;
+}
+
+.zone-spacing .spacing-input {
+  width: 46px;
+  padding: 3px 4px;
+}
+
+.zone-select {
+  flex: 1;
+  padding: 3px 4px;
+  background: #0f1a2e;
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  border-radius: 4px;
+  font-size: 11px;
 }
 
 .zone-lengths {
   font-size: 11px;
   background: rgba(0, 0, 0, 0.2);
   border-radius: 4px;
-  padding: 6px 8px;
+  padding: 5px 7px;
+  margin-top: 6px;
 }
 
 .zone-lengths.over-limit {
@@ -357,7 +415,7 @@ input {
   font-weight: 600;
   border-top: 1px solid var(--panel-border);
   margin-top: 3px;
-  padding-top: 4px;
+  padding-top: 3px;
 }
 
 .warning {

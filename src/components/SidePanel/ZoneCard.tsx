@@ -165,7 +165,7 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
             onChange={(event) =>
               updateZoneConnectionCorner(zone.id, event.target.value as ZoneConnectionCorner)
             }
-            className="spacing-input"
+            className="zone-select"
             onClick={(event) => event.stopPropagation()}
           >
             {CORNER_OPTIONS.map((option) => (
@@ -198,16 +198,7 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
 
       <div className={`zone-lengths ${isOverLimit ? 'over-limit' : ''}`}>
         <div className="length-row">
-          <span>Area:</span>
-          <span>{zone.areaM2.toFixed(2)} m²</span>
-        </div>
-        <div className="length-row">
-          <span>Spiral:</span>
-          <span>{zone.spiralLengthM.toFixed(1)} m</span>
-        </div>
-        <div className="length-row">
-          <span>Leader:</span>
-          <span>{zone.leaderLengthM.toFixed(1)} m</span>
+          <span>{zone.areaM2.toFixed(2)} m² · spiral {zone.spiralLengthM.toFixed(1)}m · leader {zone.leaderLengthM.toFixed(1)}m</span>
         </div>
         <div className="length-row total">
           <span>Total:</span>
