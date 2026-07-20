@@ -339,7 +339,6 @@ function cleanRectilinearPolygon(points: Point[]): Point[] | null {
         const inDx = curr.x - prev.x;
         const inDy = curr.y - prev.y;
         const outDx = next.x - curr.x;
-        const outDy = next.y - curr.y;
 
         // Every edge must be purely horizontal or vertical.
         if (Math.abs(inDx) > EPSILON && Math.abs(inDy) > EPSILON) return null;
@@ -1617,11 +1616,7 @@ export function generateSerpentine(
     if (!cleanedPoints) {
         return [];
     }
-
-    const originalPolygon: Polygon = {
-        points: cleanedPoints,
-    };
-
+    
     const originalXs = cleanedPoints.map(
         point => point.x,
     );
