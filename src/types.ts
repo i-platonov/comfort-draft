@@ -35,11 +35,12 @@ export interface Zone {
   areaM2: number;
   /**
    * Manually-drawn leader waypoints (interior elbows only — not including the
-   * spiral stub or the manifold port, which are resolved dynamically at
-   * render/length-calc time). `null` means that leg hasn't been routed yet.
+   * anchor or manifold port, which are resolved dynamically at render/length-calc
+   * time). A single path represents the supply+return pair as one trunk; they're
+   * rendered as two parallel offset lines but always move and are edited together.
+   * `null` means the zone hasn't been routed yet.
    */
-  supplyLeaderWaypoints: Point[] | null;
-  returnLeaderWaypoints: Point[] | null;
+  leaderWaypoints: Point[] | null;
   /**
    * Position along the manifold's tangent axis (offset in px from the
    * manifold's center) where this zone's supply/return pair connects — chosen
@@ -62,9 +63,9 @@ export type ToolMode =
   | 'routeLeader';
 
 /**
- * In-progress manual leader routing session for a single zone. The user
- * draws one shared path (anchored at the spiral's supply stub); the return
- * leg is derived automatically as a parallel offset of it.
+ * In-progress manual leader routing session for a single zone. The user draws
+ * one shared path (anchored between the spiral's two stub ends); it's rendered
+ * as a doubled line representing the supply+return pair.
  */
 export interface LeaderRoutingState {
   zoneId: string;

@@ -2,6 +2,7 @@ import { type ChangeEvent, useRef, useState } from 'react';
 import DxfParser from 'dxf-parser';
 import { fitDxfToViewport, parseDxfEntities } from '../../geometry/dxfHelpers';
 import { useStore } from '../../state/store';
+import HeatTab from './HeatTab';
 import ZoneCard from './ZoneCard';
 
 const IMAGE_ACCEPT = '.png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif';
@@ -45,7 +46,7 @@ export default function SidePanel() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [calibrationDistance, setCalibrationDistance] = useState('1.0');
   const [importError, setImportError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'setup' | 'zones'>('setup');
+  const [activeTab, setActiveTab] = useState<'setup' | 'zones' | 'heat'>('setup');
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -152,6 +153,12 @@ export default function SidePanel() {
           onClick={() => setActiveTab('zones')}
         >
           🏠 Zones {zones.length > 0 && <span className="zone-count">{zones.length}</span>}
+        </button>
+        <button
+          className={`side-panel-tab ${activeTab === 'heat' ? 'active' : ''}`}
+          onClick={() => setActiveTab('heat')}
+        >
+          🔥 Heat
         </button>
       </div>
 
@@ -296,6 +303,8 @@ export default function SidePanel() {
           )}
         </section>
       )}
+
+      {activeTab === 'heat' && <HeatTab />}
     </div>
   );
 }

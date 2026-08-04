@@ -1,8 +1,8 @@
-import { useMemo } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { Circle, Group, Layer, Rect, Text } from 'react-konva';
-import { Manifold, Point, Zone } from '../../types';
+import { Manifold, Zone } from '../../types';
 import { useStore } from '../../state/store';
-import { getManifoldLayout, getManifoldSlotPoints, getZoneManifoldPorts } from '../../geometry/manifoldRouting';
+import { getManifoldLayout } from '../../geometry/manifoldRouting';
 
 interface Props {
   manifold: Manifold | null;
@@ -15,28 +15,18 @@ function normalizeAngle(degrees: number): number {
   return wrapped < 0 ? wrapped + 360 : wrapped;
 }
 
-export default function ManifoldLayer({ manifold, zones, pixelsPerMeter }: Props) {
+function ManifoldLayer({ manifold, zones, pixelsPerMeter }: Props) {
   const updateManifoldPosition = useStore((state) => state.updateManifoldPosition);
   const setManifoldRotation = useStore((state) => state.setManifoldRotation);
-  const toolMode = useStore((state) => state.toolMode);
+  // A single click-drag can nudge the manifold and silently wipe every zone's leader
+  // routing (recomputeSpiral drops it whenever the manifold moves), so moving it requires
+  // an explicit double-click to arm a one-time drag rather than being draggable outright.
+  const [armed, setArmed] = useState(false);
 
   const layout = useMemo(
     () => (manifold ? getManifoldLayout(manifold, zones, pixelsPerMeter) : null),
     [manifold, zones, pixelsPerMeter],
   );
-  const ports = useMemo(() => {
-    if (!manifold) return [];
-    return zones
-      .map((zone) => {
-        const pair = getZoneManifoldPorts(manifold, zone, pixelsPerMeter);
-        return pair ? { zoneId: zone.id, ...pair } : null;
-      })
-      .filter((entry): entry is { zoneId: string; supplyPort: Point; returnPort: Point } => entry !== null);
-  }, [manifold, zones, pixelsPerMeter]);
-  const slots = useMemo(() => {
-    if (!manifold || toolMode !== 'routeLeader') return [];
-    return getManifoldSlotPoints(manifold, zones, pixelsPerMeter);
-  }, [manifold, zones, pixelsPerMeter, toolMode]);
 
   if (!manifold || !layout) return <Layer />;
 
@@ -55,20 +45,25 @@ export default function ManifoldLayer({ manifold, zones, pixelsPerMeter }: Props
         offsetX={width / 2}
         offsetY={height / 2}
         rotation={rotationDeg}
-        draggable
+        draggable={armed}
+        onDblClick={(event) => {
+          event.cancelBubble = true;
+          setArmed(true);
+        }}
         onDragEnd={(event) => {
           event.cancelBubble = true;
           updateManifoldPosition({
             x: event.target.x(),
             y: event.target.y(),
           });
+          setArmed(false);
         }}
       >
         <Rect
           width={width}
           height={height}
           fill="#1e3a5f"
-          stroke="#4a9eff"
+          stroke={armed ? '#facc15' : '#4a9eff'}
           strokeWidth={2}
           cornerRadius={4}
         />
@@ -103,22 +98,8 @@ export default function ManifoldLayer({ manifold, zones, pixelsPerMeter }: Props
           verticalAlign="middle"
         />
       </Group>
-      {slots.map((slot, index) => (
-        <Circle
-          key={index}
-          x={slot.x}
-          y={slot.y}
-          radius={2}
-          fill="rgba(255,255,255,0.4)"
-          listening={false}
-        />
-      ))}
-      {ports.map((pair) => (
-        <Group key={pair.zoneId} listening={false}>
-          <Circle x={pair.supplyPort.x} y={pair.supplyPort.y} radius={2.4} fill="#22c55e" />
-          <Circle x={pair.returnPort.x} y={pair.returnPort.y} radius={2.4} fill="#f59e0b" />
-        </Group>
-      ))}
     </Layer>
   );
 }
+
+export default memo(ManifoldLayer);

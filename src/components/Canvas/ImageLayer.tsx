@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { Image as KonvaImage, Layer } from 'react-konva';
 
 interface Props {
@@ -16,7 +16,7 @@ interface Props {
  * computed once (on import) and stored in the background state so that
  * calibration coordinates stay consistent.
  */
-export default function ImageLayer({ src, fitX, fitY, fitScale, naturalWidth, naturalHeight }: Props) {
+function ImageLayer({ src, fitX, fitY, fitScale, naturalWidth, naturalHeight }: Props) {
   const [img, setImg] = useState<HTMLImageElement | null>(null);
 
   useEffect(() => {
@@ -43,3 +43,5 @@ export default function ImageLayer({ src, fitX, fitY, fitScale, naturalWidth, na
     </Layer>
   );
 }
+
+export default memo(ImageLayer);

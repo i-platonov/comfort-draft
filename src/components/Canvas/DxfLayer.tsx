@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Arc, Circle, Layer, Line } from 'react-konva';
 import { DxfEntity } from '../../types';
 
@@ -17,7 +18,7 @@ function transformPoint(
   };
 }
 
-export default function DxfLayer({ entities, transform }: Props) {
+function DxfLayer({ entities, transform }: Props) {
   const elements: JSX.Element[] = [];
 
   entities.forEach((entity, idx) => {
@@ -101,3 +102,5 @@ export default function DxfLayer({ entities, transform }: Props) {
 
   return <Layer listening={false}>{elements}</Layer>;
 }
+
+export default memo(DxfLayer);

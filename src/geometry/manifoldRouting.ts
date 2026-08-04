@@ -5,7 +5,6 @@ const MANIFOLD_THICKNESS_PX = 28;
 const MANIFOLD_PORT_END_PADDING_PX = 12;
 const MANIFOLD_PAIR_GAP_FACTOR = 0.35;
 const LEADER_CLEARANCE_PX = 7;
-const EPSILON = 1e-6;
 
 export interface ManifoldLayout {
   lengthPx: number;
@@ -28,6 +27,11 @@ function getManifoldAxes(manifold: Manifold): { tangent: Point; normal: Point } 
   return { tangent, normal };
 }
 
+/** The manifold's lengthwise direction — the axis a connection slides along. */
+export function getManifoldTangent(manifold: Manifold): Point {
+  return getManifoldAxes(manifold).tangent;
+}
+
 function getManifoldZonePitchPx(pixelsPerMeter: number): number {
   if (!Number.isFinite(pixelsPerMeter) || pixelsPerMeter <= 0) {
     return 5;
@@ -38,12 +42,10 @@ function getManifoldZonePitchPx(pixelsPerMeter: number): number {
 }
 
 /**
- * Spacing of connection slots along the manifold.
- *
- * `pairGapPx` separates a single zone's supply and return ports. `pitchPx` is
- * the centre-to-centre spacing between adjacent slots, forced to exceed the
- * pair gap (plus a clearance) so a zone's supply/return pair can never
- * straddle a neighbouring slot.
+ * `pairGapPx` separates a single zone's supply and return ports. `pitchPx` is a
+ * typical per-zone width (pair gap plus clearance) used only to size the manifold
+ * by zone count — connections themselves aren't confined to a grid and can be
+ * freely slid anywhere along the manifold's length.
  */
 function getManifoldSpacing(pixelsPerMeter: number): { pitchPx: number; pairGapPx: number } {
   const basePitchPx = Math.max(5, getManifoldZonePitchPx(pixelsPerMeter));
@@ -78,7 +80,7 @@ export function getManifoldLayout(
 }
 
 /** World-space point at a given tangential offset along the manifold's connection edge. */
-function pointAtManifoldOffset(manifold: Manifold, offsetPx: number): Point {
+export function pointAtManifoldOffset(manifold: Manifold, offsetPx: number): Point {
   const { tangent, normal } = getManifoldAxes(manifold);
   const sideOffset = MANIFOLD_THICKNESS_PX / 2;
   const sideCenter = {
@@ -97,10 +99,10 @@ export interface ZoneManifoldPorts {
 }
 
 /**
- * Resolve a zone's supply/return connection points from its user-chosen
- * position along the manifold (`zone.manifoldPortOffsetPx`, set by clicking
- * the manifold while routing) rather than an automatic slot assignment.
- * Returns null when the zone hasn't been connected to the manifold yet.
+ * Resolve a zone's supply/return connection points from its user-chosen position
+ * along the manifold (`zone.manifoldPortOffsetPx`, set by clicking the manifold
+ * while routing, or by sliding it afterward). Returns null when the zone hasn't
+ * been connected to the manifold yet.
  */
 export function getZoneManifoldPorts(
   manifold: Manifold,
@@ -124,32 +126,19 @@ export function projectPointOntoManifold(manifold: Manifold, point: Point): numb
   return dx * tangent.x + dy * tangent.y;
 }
 
-function getManifoldSlotHalfSpan(manifold: Manifold, zones: Zone[], pixelsPerMeter: number): number {
+/** Furthest a connection can sit from the manifold's center and still clear the end padding. */
+function getManifoldOffsetHalfSpan(manifold: Manifold, zones: Zone[], pixelsPerMeter: number): number {
   const layout = getManifoldLayout(manifold, zones, pixelsPerMeter);
   return Math.max(0, layout.lengthPx / 2 - MANIFOLD_PORT_END_PADDING_PX);
 }
 
-/** Evenly-spaced candidate outlet positions along the manifold, for picking a connection point. */
-export function getManifoldSlotPoints(manifold: Manifold, zones: Zone[], pixelsPerMeter: number): Point[] {
-  const { pitchPx } = getManifoldSpacing(pixelsPerMeter);
-  const halfSpan = getManifoldSlotHalfSpan(manifold, zones, pixelsPerMeter);
-
-  const slots: Point[] = [];
-  for (let offset = -halfSpan; offset <= halfSpan + EPSILON; offset += pitchPx) {
-    slots.push(pointAtManifoldOffset(manifold, offset));
-  }
-  return slots;
-}
-
-/** Snap a raw tangential offset to the nearest candidate slot, clamped within the manifold body. */
-export function snapToNearestManifoldOffset(
+/** Clamp a raw tangential offset within the manifold body — connections aren't confined to a grid. */
+export function clampManifoldOffset(
   manifold: Manifold,
   zones: Zone[],
   pixelsPerMeter: number,
   rawOffsetPx: number,
 ): number {
-  const { pitchPx } = getManifoldSpacing(pixelsPerMeter);
-  const halfSpan = getManifoldSlotHalfSpan(manifold, zones, pixelsPerMeter);
-  const clamped = Math.max(-halfSpan, Math.min(halfSpan, rawOffsetPx));
-  return Math.round(clamped / pitchPx) * pitchPx;
+  const halfSpan = getManifoldOffsetHalfSpan(manifold, zones, pixelsPerMeter);
+  return Math.max(-halfSpan, Math.min(halfSpan, rawOffsetPx));
 }

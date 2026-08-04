@@ -4,6 +4,9 @@ import { ManifoldLayout, getZoneManifoldPorts } from './manifoldRouting';
 
 const EPSILON = 1e-6;
 
+/** Half-gap (px) used to render the single leader path as two parallel offset lines. */
+export const LEADER_DOUBLE_LINE_HALF_GAP_PX = 3;
+
 /**
  * Unit vector pointing outward from the spiral at the given stub — i.e. the
  * direction a pipe continuing straight past that stub would travel. Used to
@@ -36,11 +39,53 @@ export function snapFirstLegPoint(
   return { x: anchor.x + direction.x * t, y: anchor.y + direction.y * t };
 }
 
-/** Snap a click onto a horizontal or vertical segment from `prev`, whichever axis moved more. */
-export function snapElbowPoint(prev: Point, raw: Point): Point {
+/**
+ * Direction of travel arriving at the last point of `points` — the direction of the
+ * segment that reached it, or `exitDir` if `points` has fewer than two entries (i.e.
+ * the next click is only the second point of the leg, still leaving the stub).
+ */
+export function getIncomingLegDirection(exitDir: Point, points: Point[]): Point {
+  if (points.length < 2) return exitDir;
+  const prev = points[points.length - 1];
+  const before = points[points.length - 2];
+  const dx = prev.x - before.x;
+  const dy = prev.y - before.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: dx / len, y: dy / len };
+}
+
+/**
+ * Snap a click onto a horizontal or vertical segment from `prev`, whichever axis moved
+ * more — unless that axis matches `incomingDirection` and the click asks to backtrack
+ * along it, in which case the corner is forced onto the cross axis instead, clamped to
+ * a minimum length so the pipe always makes a visible turn rather than folding back on
+ * itself (a 180) or collapsing to a zero-length corner.
+ */
+export function snapElbowPoint(
+  prev: Point,
+  raw: Point,
+  incomingDirection: Point,
+  minCornerPx = 15,
+): Point {
   const dx = raw.x - prev.x;
   const dy = raw.y - prev.y;
-  return Math.abs(dx) >= Math.abs(dy) ? { x: raw.x, y: prev.y } : { x: prev.x, y: raw.y };
+  const incomingHorizontal = Math.abs(incomingDirection.x) >= Math.abs(incomingDirection.y);
+  const clickHorizontal = Math.abs(dx) >= Math.abs(dy);
+
+  if (clickHorizontal === incomingHorizontal) {
+    const forwardSign = Math.sign(incomingHorizontal ? incomingDirection.x : incomingDirection.y) || 1;
+    const movement = incomingHorizontal ? dx : dy;
+    if (movement * forwardSign < 0) {
+      const cross = incomingHorizontal ? dy : dx;
+      const crossSign = Math.sign(cross) || 1;
+      const clamped = crossSign * Math.max(Math.abs(cross), minCornerPx);
+      return incomingHorizontal
+        ? { x: prev.x, y: prev.y + clamped }
+        : { x: prev.x + clamped, y: prev.y };
+    }
+  }
+
+  return clickHorizontal ? { x: raw.x, y: prev.y } : { x: prev.x, y: raw.y };
 }
 
 /** True when `point` falls within the manifold's body (plus a click margin). */
@@ -58,49 +103,94 @@ export function isPointOnManifold(
 }
 
 /**
- * Connect `from` to `to` with at most one right-angle bend, continuing in
- * `incomingDirection` before turning — so the connector reads as a natural
- * extension of the path rather than an arbitrary jog. Returns just `[to]`
- * when the two points already share an axis.
+ * Connect `from` to `to`, continuing in `incomingDirection` before turning where
+ * possible so the connector reads as a natural extension of the path — but never
+ * by backtracking along that direction. If `to` sits behind `from` on the incoming
+ * axis, the first leg kicks onto the cross axis by a small fixed amount (staying in
+ * `from`'s own lane, so a twin offset path doesn't collapse onto the same corner)
+ * before running parallel to `to` and converging into it at the last segment.
  */
-export function orthogonalConnector(incomingDirection: Point, from: Point, to: Point): Point[] {
-  if (Math.abs(from.x - to.x) < EPSILON || Math.abs(from.y - to.y) < EPSILON) {
+export function orthogonalConnector(
+  incomingDirection: Point,
+  from: Point,
+  to: Point,
+  minKickPx = 15,
+): Point[] {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const incomingHorizontal = Math.abs(incomingDirection.x) >= Math.abs(incomingDirection.y);
+  const alongIncoming = incomingHorizontal ? dx : dy;
+  const crossDelta = incomingHorizontal ? dy : dx;
+
+  // `to` is purely on the cross axis — a single perpendicular segment is already
+  // a clean turn, not a continuation that could backtrack.
+  if (Math.abs(alongIncoming) < EPSILON) {
     return [to];
   }
-  const incomingHorizontal = Math.abs(incomingDirection.y) < Math.abs(incomingDirection.x);
+
+  const forwardSign = Math.sign(incomingHorizontal ? incomingDirection.x : incomingDirection.y) || 1;
+
+  if (alongIncoming * forwardSign < 0) {
+    // Continuing along the incoming axis would backtrack. Kick onto the cross axis
+    // from `from`'s own position (not `to`'s) so parallel offset legs keep their
+    // separation through the middle segment, then converge into `to` at the end.
+    const crossSign = Math.abs(crossDelta) > EPSILON ? Math.sign(crossDelta) : 1;
+    const kick = incomingHorizontal
+      ? { x: from.x, y: from.y + crossSign * minKickPx }
+      : { x: from.x + crossSign * minKickPx, y: from.y };
+    const aligned = incomingHorizontal ? { x: to.x, y: kick.y } : { x: kick.x, y: to.y };
+    return [kick, aligned, to];
+  }
+
   const corner = incomingHorizontal ? { x: to.x, y: from.y } : { x: from.x, y: to.y };
   return [corner, to];
 }
 
-function isAxisAligned(a: Point, b: Point): boolean {
-  return Math.abs(a.x - b.x) < EPSILON || Math.abs(a.y - b.y) < EPSILON;
-}
+/**
+ * Tolerance (px) for treating two points as axis-aligned — both when repairing a path
+ * after a drag and when deciding whether a rendered segment is "straight enough" to offer
+ * as a draggable row/col slider. Points fed through several chained computations (spiral
+ * generation, projections, reflows) rarely land on an exactly-equal coordinate, so the
+ * geometric EPSILON is too tight for either purpose and would falsely treat clean
+ * horizontal/vertical segments as diagonal.
+ */
+export const DRAG_ALIGN_TOLERANCE_PX = 2;
 
-/** Insert an L-bend between any two consecutive points that aren't axis-aligned. */
-function orthogonalizePath(points: Point[]): Point[] {
+/**
+ * Insert an L-bend between any two consecutive points that aren't (nearly) axis-aligned;
+ * points within tolerance are snapped exactly onto the shared axis instead of bending, so
+ * a drag that was meant to be a plain move doesn't spuriously add a waypoint.
+ */
+function orthogonalizePath(points: Point[], tolerancePx = DRAG_ALIGN_TOLERANCE_PX): Point[] {
   if (points.length < 2) return [...points];
   const out: Point[] = [points[0]];
   for (let i = 1; i < points.length; i++) {
     const prev = out[out.length - 1];
     const cur = points[i];
-    if (!isAxisAligned(prev, cur)) {
+    const dx = Math.abs(prev.x - cur.x);
+    const dy = Math.abs(prev.y - cur.y);
+    if (dx < tolerancePx && dx <= dy) {
+      out.push({ x: prev.x, y: cur.y });
+    } else if (dy < tolerancePx) {
       out.push({ x: cur.x, y: prev.y });
+    } else {
+      out.push({ x: cur.x, y: prev.y });
+      out.push(cur);
     }
-    out.push(cur);
   }
   return out;
 }
 
 /** Drop collinear midpoints so a straightened bend collapses instead of leaving a redundant kink. */
-function simplifyCollinearPath(points: Point[]): Point[] {
+function simplifyCollinearPath(points: Point[], tolerancePx = DRAG_ALIGN_TOLERANCE_PX): Point[] {
   if (points.length < 3) return [...points];
   const out: Point[] = [points[0]];
   for (let i = 1; i < points.length - 1; i++) {
     const a = out[out.length - 1];
     const b = points[i];
     const c = points[i + 1];
-    const collinearV = Math.abs(a.x - b.x) < EPSILON && Math.abs(b.x - c.x) < EPSILON;
-    const collinearH = Math.abs(a.y - b.y) < EPSILON && Math.abs(b.y - c.y) < EPSILON;
+    const collinearV = Math.abs(a.x - b.x) < tolerancePx && Math.abs(b.x - c.x) < tolerancePx;
+    const collinearH = Math.abs(a.y - b.y) < tolerancePx && Math.abs(b.y - c.y) < tolerancePx;
     if (collinearV || collinearH) continue;
     out.push(b);
   }
@@ -130,6 +220,9 @@ function rotate90CW(v: Point): Point {
  * choosing a side per corner) is what makes the result a valid, non-crossing
  * parallel path — whichever side ends up "inside" a given bend automatically
  * gets a shorter corner, and the "outside" side a longer one.
+ *
+ * Used purely as a rendering trick to draw the single leader path as a doubled
+ * line (one offset copy on each side) representing the supply+return pair.
  */
 export function offsetOrthogonalPath(path: Point[], signedGap: number): Point[] {
   if (path.length < 2) return [...path];
@@ -168,18 +261,17 @@ export function offsetOrthogonalPath(path: Point[], signedGap: number): Point[] 
   });
 }
 
-/**
- * Signed perpendicular distance from the supply stub to the return stub,
- * expressed relative to the supply exit direction's clockwise normal. Offsetting
- * the supply path by this amount reproduces the real stub separation exactly.
- */
-function computeSignedStubGap(stubs: { start: Point; end: Point }, supplyExitDir: Point): number {
-  const normal = rotate90CW(supplyExitDir);
-  const gapVec = { x: stubs.end.x - stubs.start.x, y: stubs.end.y - stubs.start.y };
-  return gapVec.x * normal.x + gapVec.y * normal.y;
+/** Midpoint between two points — used to anchor the single leader line between the spiral's two stub ends, or between the manifold's two ports. */
+export function midpoint(a: Point, b: Point): Point {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
-function finalizeLegWaypoints(anchor: Point, exitDir: Point, elbows: Point[], target: Point): Point[] {
+/**
+ * Given the user-drawn elbows (anchored implicitly between the spiral's two
+ * stub ends), resolve the final interior waypoints connecting into `target`
+ * (the midpoint between the zone's two manifold ports).
+ */
+export function computeLeaderWaypoints(anchor: Point, exitDir: Point, elbows: Point[], target: Point): Point[] {
   const from = elbows.length > 0 ? elbows[elbows.length - 1] : anchor;
   const before = elbows.length > 1 ? elbows[elbows.length - 2] : anchor;
   const incomingDir = elbows.length > 0 ? { x: from.x - before.x, y: from.y - before.y } : exitDir;
@@ -187,71 +279,22 @@ function finalizeLegWaypoints(anchor: Point, exitDir: Point, elbows: Point[], ta
   return [...elbows, ...connector.slice(0, -1)];
 }
 
-export interface TwinLeaderWaypoints {
-  supplyWaypoints: Point[];
-  returnWaypoints: Point[];
-}
-
-/**
- * Given the user-drawn supply path (elbows only, anchored implicitly at the
- * spiral's supply stub), derive both pipes' final interior waypoints: supply
- * as drawn, return as a parallel offset of it that shares the supply stub's
- * real separation and never crosses it, each connecting independently into
- * its own manifold port.
- */
-export function computeTwinLeaderWaypoints(
-  spiral: Point[],
-  supplyElbows: Point[],
-  supplyPort: Point,
-  returnPort: Point,
-): TwinLeaderWaypoints {
-  const stubs = getSpiralStubs(spiral);
-  if (!stubs) return { supplyWaypoints: [], returnWaypoints: [] };
-
-  const supplyExitDir = getStubExitDirection(spiral, 'start');
-  const returnExitDir = getStubExitDirection(spiral, 'end');
-
-  const supplyWaypoints = finalizeLegWaypoints(stubs.start, supplyExitDir, supplyElbows, supplyPort);
-
-  let returnElbows: Point[] = [];
-  if (supplyElbows.length > 0) {
-    const signedGap = computeSignedStubGap(stubs, supplyExitDir);
-    const offsetPath = offsetOrthogonalPath([stubs.start, ...supplyElbows], signedGap);
-    returnElbows = offsetPath.slice(1);
-  }
-  const returnWaypoints = finalizeLegWaypoints(stubs.end, returnExitDir, returnElbows, returnPort);
-
-  return { supplyWaypoints, returnWaypoints };
-}
-
-export interface TwinPreviewPaths {
-  supplyPath: Point[];
-  returnPath: Point[];
-}
-
-/** Live (unfinished) preview of both pipes while the user is still clicking elbows. */
-export function computeTwinPreviewPaths(spiral: Point[], elbows: Point[]): TwinPreviewPaths | null {
+/** Live (unfinished) preview of the leader path while the user is still clicking elbows. */
+export function computeLeaderPreviewPath(spiral: Point[], elbows: Point[]): Point[] | null {
   const stubs = getSpiralStubs(spiral);
   if (!stubs) return null;
-  if (elbows.length === 0) return { supplyPath: [stubs.start], returnPath: [stubs.end] };
-
-  const supplyExitDir = getStubExitDirection(spiral, 'start');
-  const signedGap = computeSignedStubGap(stubs, supplyExitDir);
-  const supplyPath = [stubs.start, ...elbows];
-  const returnPath = offsetOrthogonalPath(supplyPath, signedGap);
-  return { supplyPath, returnPath };
+  return [midpoint(stubs.start, stubs.end), ...elbows];
 }
 
 export interface ManualLeaderPaths {
   zoneId: string;
-  supplyPath: Point[] | null;
-  returnPath: Point[] | null;
+  leaderPath: Point[] | null;
 }
 
 /**
- * Resolve every zone's manually-drawn leader waypoints into full render/length
- * paths, anchoring the stub and port ends dynamically to the zone's current
- * spiral and the manifold's current port layout.
+ * Resolve every zone's manually-drawn leader waypoints into a full render/length
+ * path, anchoring the ends dynamically to the zone's current spiral and the
+ * manifold's current port layout.
  */
 export function buildManualLeaderPaths(
   zones: Zone[],
@@ -270,11 +313,8 @@ export function buildManualLeaderPaths(
 
     results.push({
       zoneId: zone.id,
-      supplyPath: zone.supplyLeaderWaypoints
-        ? [stubs.start, ...zone.supplyLeaderWaypoints, pair.supplyPort]
-        : null,
-      returnPath: zone.returnLeaderWaypoints
-        ? [stubs.end, ...zone.returnLeaderWaypoints, pair.returnPort]
+      leaderPath: zone.leaderWaypoints
+        ? [midpoint(stubs.start, stubs.end), ...zone.leaderWaypoints, midpoint(pair.supplyPort, pair.returnPort)]
         : null,
     });
   }

@@ -300,6 +300,33 @@ input {
   color: var(--text-muted);
 }
 
+.slider-row {
+  margin-bottom: 14px;
+}
+
+.slider-row-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.slider-row-label label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.slider-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.slider-row input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
 .calibration-input {
   display: flex;
   align-items: center;

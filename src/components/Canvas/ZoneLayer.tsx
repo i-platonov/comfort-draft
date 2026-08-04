@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import Konva from 'konva';
 import { Circle, Group, Layer, Line } from 'react-konva';
 import { Point, ToolMode, Zone } from '../../types';
@@ -40,7 +40,7 @@ interface Props {
   toolMode: ToolMode;
 }
 
-export default function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
+function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
   const updateZoneVertex = useStore((state) => state.updateZoneVertex);
   const selectZone = useStore((state) => state.selectZone);
   const setToolMode = useStore((state) => state.setToolMode);
@@ -82,10 +82,9 @@ export default function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
             <Line
               points={points}
               closed
-              fill={`${zone.color}33`}
-              stroke={isSelected ? undefined : zoneBorderColor}
-              strokeWidth={1.5}
-              dash={isSelected ? undefined : [8, 4]}
+              // Transparent (not undefined) when unselected, so the zone stays clickable —
+              // an undefined fill/stroke would drop it out of Konva's hit detection.
+              fill={isSelected ? `${zone.color}33` : 'transparent'}
               onClick={(event) => {
                 if (toolMode === 'routeLeader') {
                   if (!routing) {
@@ -157,7 +156,7 @@ export default function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
                       x={stubs.start.x}
                       y={stubs.start.y}
                       radius={4}
-                      fill={zone.supplyLeaderWaypoints ? '#2ecc71' : '#f39c12'}
+                      fill={zone.leaderWaypoints ? '#2ecc71' : '#f39c12'}
                       stroke="#0f0f1a"
                       strokeWidth={1}
                       listening={false}
@@ -166,7 +165,7 @@ export default function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
                       x={stubs.end.x}
                       y={stubs.end.y}
                       radius={4}
-                      fill={zone.returnLeaderWaypoints ? '#2ecc71' : '#f39c12'}
+                      fill={zone.leaderWaypoints ? '#2ecc71' : '#f39c12'}
                       stroke="#0f0f1a"
                       strokeWidth={1}
                       listening={false}
@@ -213,3 +212,5 @@ export default function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
     </Layer>
   );
 }
+
+export default memo(ZoneLayer);

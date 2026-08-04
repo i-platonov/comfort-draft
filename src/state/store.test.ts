@@ -32,8 +32,7 @@ const persistedZone: Zone = {
   spiralLengthM: 0,
   leaderLengthM: 0,
   areaM2: 0,
-  supplyLeaderWaypoints: null,
-  returnLeaderWaypoints: null,
+  leaderWaypoints: null,
   manifoldPortOffsetPx: null,
 };
 
@@ -261,8 +260,7 @@ describe('useStore persistence', () => {
       spiralLengthM: 0,
       leaderLengthM: 0,
       areaM2: 0,
-      supplyLeaderWaypoints: null,
-      returnLeaderWaypoints: null,
+      leaderWaypoints: null,
       manifoldPortOffsetPx: null,
     };
 

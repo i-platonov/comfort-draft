@@ -4,8 +4,12 @@ import { Arrow, Circle, Layer, Line, Rect, Stage, Text } from 'react-konva';
 import { useStore } from '../../state/store';
 import { getSpiralStubs } from '../../geometry/spiral';
 import {
-  computeTwinPreviewPaths,
+  LEADER_DOUBLE_LINE_HALF_GAP_PX,
+  computeLeaderPreviewPath,
+  getIncomingLegDirection,
   getStubExitDirection,
+  midpoint,
+  offsetOrthogonalPath,
   snapElbowPoint,
   snapFirstLegPoint,
 } from '../../geometry/manualRouting';
@@ -193,7 +197,7 @@ export default function Canvas() {
       ? 'crosshair'
       : 'default';
 
-  // Live preview of both leader paths (supply as drawn, return as its offset) while routing.
+  // Live preview of the leader path (rendered doubled) while routing.
   const routePreview = (() => {
     if (!routing || !mousePos) return null;
     const zone = zones.find((candidate) => candidate.id === routing.zoneId);
@@ -201,17 +205,24 @@ export default function Canvas() {
     const stubs = getSpiralStubs(zone.spiral);
     if (!stubs) return null;
 
+    const anchor = midpoint(stubs.start, stubs.end);
+    const exitDir = getStubExitDirection(zone.spiral, 'start');
     const previewPoint =
       routing.points.length === 0
-        ? snapFirstLegPoint(stubs.start, getStubExitDirection(zone.spiral, 'start'), mousePos)
-        : snapElbowPoint(routing.points[routing.points.length - 1], mousePos);
+        ? snapFirstLegPoint(anchor, exitDir, mousePos)
+        : snapElbowPoint(
+            routing.points[routing.points.length - 1],
+            mousePos,
+            getIncomingLegDirection(exitDir, routing.points),
+          );
 
-    const preview = computeTwinPreviewPaths(zone.spiral, [...routing.points, previewPoint]);
-    if (!preview) return null;
+    const path = computeLeaderPreviewPath(zone.spiral, [...routing.points, previewPoint]);
+    if (!path) return null;
 
     return {
-      supplyPath: preview.supplyPath,
-      returnPath: preview.returnPath,
+      path,
+      lineA: offsetOrthogonalPath(path, LEADER_DOUBLE_LINE_HALF_GAP_PX),
+      lineB: offsetOrthogonalPath(path, -LEADER_DOUBLE_LINE_HALF_GAP_PX),
       color: zone.color,
     };
   })();
@@ -298,11 +309,11 @@ export default function Canvas() {
           </>
         )}
 
-        {/* Manual leader-routing preview: supply as drawn, return as its live offset */}
+        {/* Manual leader-routing preview: the single drawn path, rendered doubled */}
         {routePreview && (
           <>
             <Arrow
-              points={routePreview.supplyPath.flatMap((point) => [point.x, point.y])}
+              points={routePreview.lineA.flatMap((point) => [point.x, point.y])}
               stroke={routePreview.color}
               strokeWidth={2}
               fill={routePreview.color}
@@ -313,7 +324,7 @@ export default function Canvas() {
               listening={false}
             />
             <Arrow
-              points={routePreview.returnPath.flatMap((point) => [point.x, point.y])}
+              points={routePreview.lineB.flatMap((point) => [point.x, point.y])}
               stroke={routePreview.color}
               strokeWidth={2}
               fill={routePreview.color}
@@ -323,7 +334,7 @@ export default function Canvas() {
               dash={[3, 3]}
               listening={false}
             />
-            {routePreview.supplyPath.slice(0, -1).map((point, index) => (
+            {routePreview.path.slice(0, -1).map((point, index) => (
               <Circle key={index} x={point.x} y={point.y} radius={3} fill={routePreview.color} listening={false} />
             ))}
           </>
