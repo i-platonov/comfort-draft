@@ -1,11 +1,32 @@
 import { Manifold, Point, Zone } from '../types';
 import { getSpiralStubs } from './spiral';
+import { distancePx } from './length';
 import { ManifoldLayout, getZoneManifoldPorts } from './manifoldRouting';
 
 const EPSILON = 1e-6;
 
+/** Unit vector pointing from `from` to `to`. */
+function unitDelta(from: Point, to: Point): Point {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: dx / len, y: dy / len };
+}
+
 /** Half-gap (px) used to render the single leader path as two parallel offset lines. */
 export const LEADER_DOUBLE_LINE_HALF_GAP_PX = 3;
+
+/**
+ * How far a leader may cut diagonally on its final approach into the manifold. A longer
+ * run is bent back onto the grid so only this last stretch runs at an angle.
+ */
+export const MAX_DIAGONAL_APPROACH_M = 2;
+
+/** `MAX_DIAGONAL_APPROACH_M` in pixels; unlimited when the drawing scale is unknown. */
+export function maxDiagonalApproachPx(pixelsPerMeter: number): number {
+  if (!Number.isFinite(pixelsPerMeter) || pixelsPerMeter <= 0) return Infinity;
+  return MAX_DIAGONAL_APPROACH_M * pixelsPerMeter;
+}
 
 /**
  * Unit vector pointing outward from the spiral at the given stub — i.e. the
@@ -204,60 +225,76 @@ function simplifyCollinearPath(points: Point[], tolerancePx = DRAG_ALIGN_TOLERAN
  * midpoints that became redundant. `points` should include the fixed anchor
  * and port at the ends.
  */
-export function reflowLeaderPath(points: Point[]): Point[] {
+function reflowLeaderPath(points: Point[]): Point[] {
   return simplifyCollinearPath(orthogonalizePath(points));
+}
+
+/**
+ * Repair only the user-drawn portion of a leader after a drag. The approach into the
+ * manifold is derived separately by `manifoldApproachPoints` and is deliberately allowed
+ * to run diagonally, so it must not be squared off along with the drawn waypoints.
+ */
+export function reflowLeaderWaypoints(anchor: Point, waypoints: Point[]): Point[] {
+  return reflowLeaderPath([anchor, ...waypoints]).slice(1);
 }
 
 function rotate90CW(v: Point): Point {
   return { x: v.y, y: -v.x };
 }
 
+function translate(point: Point, delta: Point): Point {
+  return { x: point.x + delta.x, y: point.y + delta.y };
+}
+
+/** Where two infinite lines cross, or null when they're parallel. */
+function intersectLines(a: Point, dirA: Point, b: Point, dirB: Point): Point | null {
+  const denominator = dirA.x * dirB.y - dirA.y * dirB.x;
+  if (Math.abs(denominator) < EPSILON) return null;
+  const t = ((b.x - a.x) * dirB.y - (b.y - a.y) * dirB.x) / denominator;
+  return { x: a.x + dirA.x * t, y: a.y + dirA.y * t };
+}
+
+/** Past this multiple of the gap, a near-fold's mitre spike is dropped for a plain corner. */
+const MAX_MITRE_RATIO = 4;
+
 /**
- * Offset an orthogonal polyline by a signed distance: each segment is
- * translated along `signedGap * rotate90CW(segmentDirection)`, and shared
- * corners are reconciled by combining the two adjacent offset segments'
- * fixed coordinate. Using the same rotation for every segment (rather than
- * choosing a side per corner) is what makes the result a valid, non-crossing
- * parallel path — whichever side ends up "inside" a given bend automatically
- * gets a shorter corner, and the "outside" side a longer one.
+ * Offset a polyline by a signed distance: each segment is translated along
+ * `signedGap * rotate90CW(segmentDirection)`, and each interior corner is placed where
+ * the two adjacent offset segments intersect. Using the same rotation for every segment
+ * (rather than choosing a side per corner) is what makes the result a valid, non-crossing
+ * parallel path — whichever side ends up "inside" a given bend automatically gets a
+ * shorter corner, and the "outside" side a longer one. Mitring the corners rather than
+ * combining fixed coordinates is what keeps that true at the leader's diagonal approach
+ * into the manifold, not just at right angles.
  *
- * Used purely as a rendering trick to draw the single leader path as a doubled
- * line (one offset copy on each side) representing the supply+return pair.
+ * Used purely as a rendering trick to draw the single leader path as a doubled line (one
+ * offset copy on each side) representing the supply+return pair.
  */
-export function offsetOrthogonalPath(path: Point[], signedGap: number): Point[] {
+export function offsetPolyline(path: Point[], signedGap: number): Point[] {
   if (path.length < 2) return [...path];
 
+  const directions: Point[] = [];
   const displacements: Point[] = [];
   for (let i = 1; i < path.length; i++) {
-    const dx = path[i].x - path[i - 1].x;
-    const dy = path[i].y - path[i - 1].y;
-    const len = Math.hypot(dx, dy) || 1;
-    const normal = rotate90CW({ x: dx / len, y: dy / len });
+    const direction = unitDelta(path[i - 1], path[i]);
+    const normal = rotate90CW(direction);
+    directions.push(direction);
     displacements.push({ x: signedGap * normal.x, y: signedGap * normal.y });
   }
 
   return path.map((point, i) => {
-    if (i === 0) {
-      const d = displacements[0];
-      return { x: point.x + d.x, y: point.y + d.y };
-    }
-    if (i === path.length - 1) {
-      const d = displacements[i - 1];
-      return { x: point.x + d.x, y: point.y + d.y };
-    }
+    if (i === 0) return translate(point, displacements[0]);
+    if (i === path.length - 1) return translate(point, displacements[i - 1]);
 
-    const dPrev = displacements[i - 1];
-    const dNext = displacements[i];
-    const prevVertical = Math.abs(point.x - path[i - 1].x) < EPSILON;
-    const nextVertical = Math.abs(path[i + 1].x - point.x) < EPSILON;
-    if (prevVertical && !nextVertical) {
-      return { x: point.x + dPrev.x, y: point.y + dNext.y };
+    const fromIncoming = translate(point, displacements[i - 1]);
+    const fromOutgoing = translate(point, displacements[i]);
+    const mitre = intersectLines(fromIncoming, directions[i - 1], fromOutgoing, directions[i]);
+    // Parallel (a straight-through corner) or a spike from an almost-180° fold: the
+    // plain displaced corner is the better answer.
+    if (!mitre || distancePx(mitre, point) > Math.abs(signedGap) * MAX_MITRE_RATIO) {
+      return fromOutgoing;
     }
-    if (!prevVertical && nextVertical) {
-      return { x: point.x + dNext.x, y: point.y + dPrev.y };
-    }
-    // Collinear (shouldn't happen post-simplification) — split the difference.
-    return { x: point.x + (dPrev.x + dNext.x) / 2, y: point.y + (dPrev.y + dNext.y) / 2 };
+    return mitre;
   });
 }
 
@@ -267,16 +304,74 @@ export function midpoint(a: Point, b: Point): Point {
 }
 
 /**
- * Given the user-drawn elbows (anchored implicitly between the spiral's two
- * stub ends), resolve the final interior waypoints connecting into `target`
- * (the midpoint between the zone's two manifold ports).
+ * The auto-generated tail of a leader: how it leaves the last drawn waypoint and arrives
+ * at `target` (the midpoint between the zone's two manifold ports). The pipe may cut
+ * straight across at any angle, but only for `maxDiagonalPx` — a longer approach gets one
+ * bend inserted, so it travels squarely up to the point where a diagonal of that length
+ * reaches the target. When neither axis fits inside the cap no diagonal is possible at
+ * all and the connector stays fully square.
+ *
+ * Returns the points after `from` (a bend, when one is needed) ending at `target`. This
+ * is derived on every build rather than stored, so the bend appears and disappears on its
+ * own as the port slides or the zone moves — the user never manages it.
  */
-export function computeLeaderWaypoints(anchor: Point, exitDir: Point, elbows: Point[], target: Point): Point[] {
-  const from = elbows.length > 0 ? elbows[elbows.length - 1] : anchor;
-  const before = elbows.length > 1 ? elbows[elbows.length - 2] : anchor;
-  const incomingDir = elbows.length > 0 ? { x: from.x - before.x, y: from.y - before.y } : exitDir;
-  const connector = orthogonalConnector(incomingDir, from, target);
-  return [...elbows, ...connector.slice(0, -1)];
+export function manifoldApproachPoints(
+  incomingDirection: Point,
+  from: Point,
+  target: Point,
+  maxDiagonalPx: number,
+): Point[] {
+  const dx = target.x - from.x;
+  const dy = target.y - from.y;
+
+  // Square already: an ordinary horizontal/vertical run, which has no length limit.
+  if (Math.abs(dx) < DRAG_ALIGN_TOLERANCE_PX || Math.abs(dy) < DRAG_ALIGN_TOLERANCE_PX) return [target];
+  if (Math.hypot(dx, dy) <= maxDiagonalPx) return [target];
+
+  // The straight leg runs along the axis with more distance to cover; a capped diagonal
+  // can only finish the job if the whole of the other axis fits within the cap.
+  const legIsHorizontal = Math.abs(dx) >= Math.abs(dy);
+  const crossDelta = legIsHorizontal ? dy : dx;
+  if (Math.abs(crossDelta) > maxDiagonalPx) {
+    return orthogonalConnector(incomingDirection, from, target);
+  }
+
+  // Stop the leg short of the target by however far a `maxDiagonalPx` hypotenuse reaches
+  // back along the leg's own axis. `alongDelta` always exceeds that (the direct distance
+  // is past the cap), so the leg never overshoots and doubles back.
+  const alongDelta = legIsHorizontal ? dx : dy;
+  const runBackPx = Math.sqrt(maxDiagonalPx * maxDiagonalPx - crossDelta * crossDelta);
+  const bend = legIsHorizontal
+    ? { x: target.x - Math.sign(alongDelta) * runBackPx, y: from.y }
+    : { x: from.x, y: target.y - Math.sign(alongDelta) * runBackPx };
+
+  // Arriving along the leg's axis but pointing the other way would fold the pipe back on
+  // itself; a square connector makes that turn properly instead.
+  const incomingIsHorizontal = Math.abs(incomingDirection.x) >= Math.abs(incomingDirection.y);
+  const incomingAlong = legIsHorizontal ? incomingDirection.x : incomingDirection.y;
+  if (incomingIsHorizontal === legIsHorizontal && alongDelta * incomingAlong < 0) {
+    return orthogonalConnector(incomingDirection, from, target);
+  }
+
+  return [bend, target];
+}
+
+/**
+ * The full leader polyline: the spiral anchor, the user's drawn waypoints, then the
+ * derived approach into the manifold. Stored waypoints never include that approach — it
+ * is rebuilt here every time so it stays correct as the port slides or the zone moves.
+ */
+export function assembleLeaderPath(
+  anchor: Point,
+  waypoints: Point[],
+  target: Point,
+  maxDiagonalPx: number,
+): Point[] {
+  const from = waypoints.length > 0 ? waypoints[waypoints.length - 1] : anchor;
+  // With nothing drawn yet there is no leg to fold back on, so aiming straight at the
+  // target is a direction the U-turn check will never object to.
+  const incomingDirection = getIncomingLegDirection(unitDelta(anchor, target), [anchor, ...waypoints]);
+  return [anchor, ...waypoints, ...manifoldApproachPoints(incomingDirection, from, target, maxDiagonalPx)];
 }
 
 /** Live (unfinished) preview of the leader path while the user is still clicking elbows. */
@@ -314,7 +409,12 @@ export function buildManualLeaderPaths(
     results.push({
       zoneId: zone.id,
       leaderPath: zone.leaderWaypoints
-        ? [midpoint(stubs.start, stubs.end), ...zone.leaderWaypoints, midpoint(pair.supplyPort, pair.returnPort)]
+        ? assembleLeaderPath(
+            midpoint(stubs.start, stubs.end),
+            zone.leaderWaypoints,
+            midpoint(pair.supplyPort, pair.returnPort),
+            maxDiagonalApproachPx(pixelsPerMeter),
+          )
         : null,
     });
   }

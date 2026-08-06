@@ -22,12 +22,13 @@ import {
 } from '../geometry/manifoldRouting';
 import { isAxisAlignedRect, resizeRectFromCorner } from '../geometry/rect';
 import {
-  computeLeaderWaypoints,
+  assembleLeaderPath,
   getIncomingLegDirection,
   getStubExitDirection,
   isPointOnManifold,
+  maxDiagonalApproachPx,
   midpoint,
-  reflowLeaderPath,
+  reflowLeaderWaypoints,
   snapElbowPoint,
   snapFirstLegPoint,
 } from '../geometry/manualRouting';
@@ -145,6 +146,12 @@ interface StoreState {
     value: number,
     reflow: boolean,
   ) => void;
+  /**
+   * Slide a zone's manifold connection along the manifold's edge by dragging its port
+   * dot to `pt`; the dot isn't confined to the edge itself, the point is projected onto
+   * it. The drawn waypoints stay put — only the derived approach re-aims.
+   */
+  slideZoneManifoldPort: (zoneId: string, pt: Point) => void;
   setPixelsPerMeter: (ppm: number) => void;
   setMaxCircuitLength: (m: number) => void;
   setDefaultSpacing: (mm: number) => void;
@@ -226,11 +233,14 @@ function recomputeZones(
     const pair = getZoneManifoldPorts(manifold, zone, pixelsPerMeter);
     if (!stubs || !pair) return { ...zone, leaderLengthM: 0 };
 
+    const fullPath = assembleLeaderPath(
+      midpoint(stubs.start, stubs.end),
+      zone.leaderWaypoints,
+      midpoint(pair.supplyPort, pair.returnPort),
+      maxDiagonalApproachPx(pixelsPerMeter),
+    );
     // One drawn path represents the supply+return pair, so it accounts for two pipe runs.
-    const anchor = midpoint(stubs.start, stubs.end);
-    const target = midpoint(pair.supplyPort, pair.returnPort);
-    const totalPx = pathLengthPx([anchor, ...zone.leaderWaypoints, target]) * 2;
-    return { ...zone, leaderLengthM: pxToMeters(totalPx, pixelsPerMeter) };
+    return { ...zone, leaderLengthM: pxToMeters(pathLengthPx(fullPath) * 2, pixelsPerMeter) };
   });
 }
 
@@ -262,6 +272,40 @@ function resolveLeaderAnchorTarget(
   const pair = getZoneManifoldPorts(manifold, zone, pixelsPerMeter);
   if (!pair) return null;
   return { anchor: midpoint(stubs.start, stubs.end), target: midpoint(pair.supplyPort, pair.returnPort) };
+}
+
+/**
+ * Commit a new set of user-drawn leader waypoints onto a zone. The approach into the
+ * manifold is never stored — it's rebuilt from the waypoints on every render — so only
+ * the drawn part is repaired when `reflow` is set (on drag release), and the recorded
+ * length is measured against the assembled path including that approach.
+ *
+ * Returns null when the zone has no spiral or manifold connection to route between.
+ */
+function withLeaderWaypoints(
+  zone: Zone,
+  manifold: Manifold,
+  pixelsPerMeter: number,
+  waypoints: Point[],
+  reflow: boolean,
+): Zone | null {
+  const anchorTarget = resolveLeaderAnchorTarget(zone, manifold, pixelsPerMeter);
+  if (!anchorTarget) return null;
+
+  const repaired = reflow ? reflowLeaderWaypoints(anchorTarget.anchor, waypoints) : waypoints;
+  const fullPath = assembleLeaderPath(
+    anchorTarget.anchor,
+    repaired,
+    anchorTarget.target,
+    maxDiagonalApproachPx(pixelsPerMeter),
+  );
+
+  return {
+    ...zone,
+    leaderWaypoints: repaired,
+    // One drawn path represents the supply+return pair, so it accounts for two pipe runs.
+    leaderLengthM: pxToMeters(pathLengthPx(fullPath) * 2, pixelsPerMeter),
+  };
 }
 
 function getZoneBounds(zone: Zone) {
@@ -739,14 +783,9 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
       }
 
       // Barely moved — keep the routing, just repair the first segment against the new anchor.
-      const anchorTarget = resolveLeaderAnchorTarget(recomputed, manifold, pixelsPerMeter);
-      if (!anchorTarget) return recomputed;
-      const fullPath = reflowLeaderPath([anchorTarget.anchor, ...zone.leaderWaypoints, anchorTarget.target]);
-      return {
-        ...recomputed,
-        leaderWaypoints: fullPath.slice(1, -1),
-        leaderLengthM: pxToMeters(pathLengthPx(fullPath) * 2, pixelsPerMeter),
-      };
+      return (
+        withLeaderWaypoints(recomputed, manifold, pixelsPerMeter, zone.leaderWaypoints, true) ?? recomputed
+      );
     });
     set({ zones: updated });
   },
@@ -799,29 +838,21 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     if (!routing || !manifold) return;
     const zone = zones.find((candidate) => candidate.id === routing.zoneId);
     if (!zone || !zone.spiral) return;
-    const stubs = getSpiralStubs(zone.spiral);
-    if (!stubs) return;
 
     // The user picks the outlet by clicking it directly; it can be slid afterward.
     const rawOffsetPx = projectPointOntoManifold(manifold, clickPos);
     const manifoldPortOffsetPx = clampManifoldOffset(manifold, zones, pixelsPerMeter, rawOffsetPx);
-    const pair = getZoneManifoldPorts(manifold, { ...zone, manifoldPortOffsetPx }, pixelsPerMeter);
-    if (!pair) return;
 
-    const anchor = midpoint(stubs.start, stubs.end);
-    const target = midpoint(pair.supplyPort, pair.returnPort);
-    const exitDir = getStubExitDirection(zone.spiral, 'start');
-    const leaderWaypoints = computeLeaderWaypoints(anchor, exitDir, routing.points, target);
-
-    // One drawn path represents the supply+return pair, so it accounts for two pipe runs.
-    const leaderLengthPxTotal = pathLengthPx([anchor, ...leaderWaypoints, target]) * 2;
-
-    const updatedZone: Zone = {
-      ...zone,
-      leaderWaypoints,
-      manifoldPortOffsetPx,
-      leaderLengthM: pxToMeters(leaderLengthPxTotal, pixelsPerMeter),
-    };
+    // Only the drawn elbows are stored — the run from the last elbow into the manifold is
+    // derived, so it can cut diagonally or grow a bend as the geometry changes.
+    const updatedZone = withLeaderWaypoints(
+      { ...zone, manifoldPortOffsetPx },
+      manifold,
+      pixelsPerMeter,
+      routing.points,
+      false,
+    );
+    if (!updatedZone) return;
     const updatedZones = zones.map((candidate) => (candidate.id === zone.id ? updatedZone : candidate));
 
     set({ zones: updatedZones, routing: null });
@@ -834,23 +865,13 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     if (!manifold) return;
     const zone = zones.find((candidate) => candidate.id === zoneId);
     if (!zone || !zone.leaderWaypoints) return;
-    const anchorTarget = resolveLeaderAnchorTarget(zone, manifold, pixelsPerMeter);
-    if (!anchorTarget) return;
 
     const updatedWaypoints = zone.leaderWaypoints.map((point, i) => (i === waypointIndex ? pt : point));
     // Only restructure the array (insert/drop bend points) on drag-end. Doing it on every
     // live drag-move would change the array's length mid-gesture, invalidating the dragged
     // circle's waypointIndex (captured when the drag started) for subsequent move events.
-    const rawPath = [anchorTarget.anchor, ...updatedWaypoints, anchorTarget.target];
-    const fullPath = reflow ? reflowLeaderPath(rawPath) : rawPath;
-    const newWaypoints = fullPath.slice(1, -1);
-
-    // One drawn path represents the supply+return pair, so it accounts for two pipe runs.
-    const updatedZone: Zone = {
-      ...zone,
-      leaderWaypoints: newWaypoints,
-      leaderLengthM: pxToMeters(pathLengthPx(fullPath) * 2, pixelsPerMeter),
-    };
+    const updatedZone = withLeaderWaypoints(zone, manifold, pixelsPerMeter, updatedWaypoints, reflow);
+    if (!updatedZone) return;
     set({ zones: zones.map((candidate) => (candidate.id === zoneId ? updatedZone : candidate)) });
   },
 
@@ -859,8 +880,6 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     if (!manifold) return;
     const zone = zones.find((candidate) => candidate.id === zoneId);
     if (!zone || !zone.leaderWaypoints) return;
-    const anchorTarget = resolveLeaderAnchorTarget(zone, manifold, pixelsPerMeter);
-    if (!anchorTarget) return;
 
     const updatedWaypoints = zone.leaderWaypoints.map((point, i) => {
       if (i !== waypointIndexA && i !== waypointIndexB) return point;
@@ -868,15 +887,8 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     });
     // Same drag-move-vs-drag-end split as updateLeaderWaypoint: keep the array shape stable
     // (both waypointIndexA/B still valid) while dragging, only restructuring at the end.
-    const rawPath = [anchorTarget.anchor, ...updatedWaypoints, anchorTarget.target];
-    const fullPath = reflow ? reflowLeaderPath(rawPath) : rawPath;
-    const newWaypoints = fullPath.slice(1, -1);
-
-    const updatedZone: Zone = {
-      ...zone,
-      leaderWaypoints: newWaypoints,
-      leaderLengthM: pxToMeters(pathLengthPx(fullPath) * 2, pixelsPerMeter),
-    };
+    const updatedZone = withLeaderWaypoints(zone, manifold, pixelsPerMeter, updatedWaypoints, reflow);
+    if (!updatedZone) return;
     set({ zones: zones.map((candidate) => (candidate.id === zoneId ? updatedZone : candidate)) });
   },
 
@@ -905,22 +917,43 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
       return axis === 'x' ? { x: value, y: point.y } : { x: point.x, y: value };
     });
 
-    const zoneAtNewOffset = { ...zone, manifoldPortOffsetPx: clampedOffsetPx };
-    const anchorTarget = resolveLeaderAnchorTarget(zoneAtNewOffset, manifold, pixelsPerMeter);
-    if (!anchorTarget) return;
+    // Same drag-move-vs-drag-end split as updateLeaderWaypoint: the drawn waypoints are
+    // only re-bent once, on release, not on every live-drag tick.
+    const updatedZone = withLeaderWaypoints(
+      { ...zone, manifoldPortOffsetPx: clampedOffsetPx },
+      manifold,
+      pixelsPerMeter,
+      updatedWaypoints,
+      reflow,
+    );
+    if (!updatedZone) return;
+    set({ zones: zones.map((candidate) => (candidate.id === zoneId ? updatedZone : candidate)) });
+  },
 
-    // Same drag-move-vs-drag-end split as updateLeaderWaypoint: the trailing connector into
-    // the manifold is only re-bent once, on release, not on every live-drag tick.
-    const rawPath = [anchorTarget.anchor, ...updatedWaypoints, anchorTarget.target];
-    const fullPath = reflow ? reflowLeaderPath(rawPath) : rawPath;
-    const newWaypoints = fullPath.slice(1, -1);
+  slideZoneManifoldPort: (zoneId, pt) => {
+    const { zones, manifold, pixelsPerMeter } = get();
+    if (!manifold) return;
+    const zone = zones.find((candidate) => candidate.id === zoneId);
+    if (!zone || !zone.leaderWaypoints) return;
 
-    const updatedZone: Zone = {
-      ...zone,
-      manifoldPortOffsetPx: clampedOffsetPx,
-      leaderWaypoints: newWaypoints,
-      leaderLengthM: pxToMeters(pathLengthPx(fullPath) * 2, pixelsPerMeter),
-    };
+    const clampedOffsetPx = clampManifoldOffset(
+      manifold,
+      zones,
+      pixelsPerMeter,
+      projectPointOntoManifold(manifold, pt),
+    );
+
+    // The drawn waypoints don't move at all: the approach into the manifold is derived, so
+    // it just re-aims at the new port — cutting across diagonally, or growing a bend once
+    // that diagonal would run past its limit.
+    const updatedZone = withLeaderWaypoints(
+      { ...zone, manifoldPortOffsetPx: clampedOffsetPx },
+      manifold,
+      pixelsPerMeter,
+      zone.leaderWaypoints,
+      false,
+    );
+    if (!updatedZone) return;
     set({ zones: zones.map((candidate) => (candidate.id === zoneId ? updatedZone : candidate)) });
   },
 

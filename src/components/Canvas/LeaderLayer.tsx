@@ -1,13 +1,14 @@
 import { Fragment, memo, useMemo, useRef } from 'react';
 import Konva from 'konva';
-import { Arrow, Circle, Layer, Line } from 'react-konva';
+import { Circle, Layer, Line } from 'react-konva';
 import { Point, Manifold, Zone } from '../../types';
 import { useStore } from '../../state/store';
+import { clampPointToManifoldEdge } from '../../geometry/manifoldRouting';
 import {
   DRAG_ALIGN_TOLERANCE_PX,
   LEADER_DOUBLE_LINE_HALF_GAP_PX,
   buildManualLeaderPaths,
-  offsetOrthogonalPath,
+  offsetPolyline,
 } from '../../geometry/manualRouting';
 
 interface Props {
@@ -20,13 +21,19 @@ const toFlatPoints = (points: Point[]) => points.flatMap((point) => [point.x, po
 
 const SEGMENT_HIT_WIDTH = 14;
 const MANIFOLD_CAP_HALF_WIDTH = LEADER_DOUBLE_LINE_HALF_GAP_PX + 3;
+const PORT_DOT_RADIUS = 5;
 
-/** Short perpendicular cap where the doubled line meets the manifold, like a pipe fitting. */
+/**
+ * Short cap across the doubled line where it meets the manifold, like a pipe fitting.
+ * Square to the arriving pipe whatever its angle, since the approach may run diagonally.
+ */
 function manifoldCapPoints(beforeTarget: Point, target: Point): number[] {
-  const isVertical = Math.abs(beforeTarget.x - target.x) < DRAG_ALIGN_TOLERANCE_PX;
-  return isVertical
-    ? [target.x - MANIFOLD_CAP_HALF_WIDTH, target.y, target.x + MANIFOLD_CAP_HALF_WIDTH, target.y]
-    : [target.x, target.y - MANIFOLD_CAP_HALF_WIDTH, target.x, target.y + MANIFOLD_CAP_HALF_WIDTH];
+  const dx = target.x - beforeTarget.x;
+  const dy = target.y - beforeTarget.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const capX = (-dy / len) * MANIFOLD_CAP_HALF_WIDTH;
+  const capY = (dx / len) * MANIFOLD_CAP_HALF_WIDTH;
+  return [target.x - capX, target.y - capY, target.x + capX, target.y + capY];
 }
 
 function setCursor(event: Konva.KonvaEventObject<Event>, cursor: string) {
@@ -39,6 +46,7 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
   const updateLeaderWaypoint = useStore((state) => state.updateLeaderWaypoint);
   const updateLeaderSegment = useStore((state) => state.updateLeaderSegment);
   const updateLeaderManifoldSegment = useStore((state) => state.updateLeaderManifoldSegment);
+  const slideZoneManifoldPort = useStore((state) => state.slideZoneManifoldPort);
   // Frozen for the duration of one drag gesture: onDragMove's live store updates cause a
   // re-render, which would otherwise recompute `point` from the already-moved position —
   // adding Konva's cumulative-since-drag-start offset to that on top would double-count
@@ -58,30 +66,28 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
     <Layer>
       {paths.map(({ zoneId, leaderPath }) => {
         const zone = zones.find((candidate) => candidate.id === zoneId);
-        if (!zone || !leaderPath) return null;
+        if (!zone || !leaderPath || !zone.leaderWaypoints) return null;
 
-        const lineA = offsetOrthogonalPath(leaderPath, LEADER_DOUBLE_LINE_HALF_GAP_PX);
-        const lineB = offsetOrthogonalPath(leaderPath, -LEADER_DOUBLE_LINE_HALF_GAP_PX);
+        // Only the drawn waypoints get handles; the tail of the path is the derived
+        // approach into the manifold, which the user steers via the port dot instead.
+        const waypoints = zone.leaderWaypoints;
+        const approachIsDirect = leaderPath.length === waypoints.length + 2;
+        const lineA = offsetPolyline(leaderPath, LEADER_DOUBLE_LINE_HALF_GAP_PX);
+        const lineB = offsetPolyline(leaderPath, -LEADER_DOUBLE_LINE_HALF_GAP_PX);
 
         return (
           <Fragment key={zoneId}>
-            <Arrow
+            <Line
               points={toFlatPoints(lineA)}
               stroke={zone.color}
               strokeWidth={2}
-              fill={zone.color}
-              pointerLength={8}
-              pointerWidth={6}
               opacity={0.7}
               listening={false}
             />
-            <Arrow
+            <Line
               points={toFlatPoints(lineB)}
               stroke={zone.color}
               strokeWidth={2}
-              fill={zone.color}
-              pointerLength={8}
-              pointerWidth={6}
               opacity={0.5}
               listening={false}
             />
@@ -95,7 +101,7 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
             )}
 
             {editable &&
-              leaderPath.slice(1, -1).map((point, index, waypoints) => {
+              waypoints.map((point, index) => {
                 if (index === waypoints.length - 1) return null;
                 const next = waypoints[index + 1];
                 const axis: 'x' | 'y' | null =
@@ -147,12 +153,15 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
               })}
 
             {editable &&
-              leaderPath.length >= 3 &&
+              approachIsDirect &&
+              waypoints.length > 0 &&
               (() => {
                 // The final segment, connecting the last waypoint into the manifold. Sliding
-                // it moves the manifold connection point too, not just the waypoint.
-                const waypointIndex = leaderPath.length - 3;
-                const point = leaderPath[leaderPath.length - 2];
+                // it moves the manifold connection point too, not just the waypoint. Offered
+                // only while that run is square — once it cuts across at an angle there's no
+                // single axis to slide it along, and the port dot is the handle to use.
+                const waypointIndex = waypoints.length - 1;
+                const point = waypoints[waypointIndex];
                 const next = leaderPath[leaderPath.length - 1];
                 const axis: 'x' | 'y' | null =
                   Math.abs(point.x - next.x) < DRAG_ALIGN_TOLERANCE_PX
@@ -200,7 +209,7 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
               })()}
 
             {editable &&
-              leaderPath.slice(1, -1).map((point, waypointIndex) => (
+              waypoints.map((point, waypointIndex) => (
                 <Circle
                   key={waypointIndex}
                   x={point.x}
@@ -232,6 +241,47 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
                   }}
                 />
               ))}
+
+            {leaderPath.length >= 2 &&
+              (() => {
+                // The connection dot where this zone meets the manifold. In route-leader
+                // mode it can be dragged to slide the connection along the manifold's edge;
+                // the store projects and clamps the drag, and we snap the node onto that
+                // same edge point so it can never float off the manifold mid-drag.
+                const port = leaderPath[leaderPath.length - 1];
+                const snapToEdge = (event: Konva.KonvaEventObject<DragEvent>) => {
+                  const dragged = { x: event.target.x(), y: event.target.y() };
+                  slideZoneManifoldPort(zone.id, dragged);
+                  event.target.position(
+                    clampPointToManifoldEdge(manifold, zones, pixelsPerMeter, dragged),
+                  );
+                };
+
+                return (
+                  <Circle
+                    key="manifold-port"
+                    x={port.x}
+                    y={port.y}
+                    radius={PORT_DOT_RADIUS}
+                    fill={zone.color}
+                    stroke={editable ? '#f8fafc' : '#0f0f1a'}
+                    strokeWidth={1.5}
+                    listening={editable}
+                    draggable={editable}
+                    onMouseEnter={(event) => setCursor(event, 'grab')}
+                    onMouseLeave={(event) => setCursor(event, 'crosshair')}
+                    onClick={(event) => {
+                      event.cancelBubble = true;
+                    }}
+                    onDragMove={snapToEdge}
+                    onDragEnd={(event) => {
+                      event.cancelBubble = true;
+                      snapToEdge(event);
+                      setCursor(event, 'crosshair');
+                    }}
+                  />
+                );
+              })()}
           </Fragment>
         );
       })}

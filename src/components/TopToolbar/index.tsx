@@ -15,7 +15,7 @@ function useToolHint(): string | null {
     case 'routeLeader':
       return routing
         ? 'Drawing leader path — click to add points (horizontal/vertical only), click the manifold to connect both supply and return. Esc to cancel.'
-        : 'Click a zone to start routing its leaders.';
+        : 'Click a zone to start routing its leaders, or drag a connection dot along the manifold to move it.';
     default:
       return null;
   }

@@ -3,8 +3,9 @@ import { Manifold, Point, Zone } from '../types';
 const MANIFOLD_MIN_LENGTH_PX = 80;
 const MANIFOLD_THICKNESS_PX = 28;
 const MANIFOLD_PORT_END_PADDING_PX = 12;
-const MANIFOLD_PAIR_GAP_FACTOR = 0.35;
-const LEADER_CLEARANCE_PX = 7;
+/** 5 cm per zone, split evenly into supply and return — 2.5 cm per line. */
+const MANIFOLD_ZONE_PITCH_M = 0.05;
+const MANIFOLD_FALLBACK_ZONE_PITCH_PX = 10;
 
 export interface ManifoldLayout {
   lengthPx: number;
@@ -34,24 +35,22 @@ export function getManifoldTangent(manifold: Manifold): Point {
 
 function getManifoldZonePitchPx(pixelsPerMeter: number): number {
   if (!Number.isFinite(pixelsPerMeter) || pixelsPerMeter <= 0) {
-    return 5;
+    return MANIFOLD_FALLBACK_ZONE_PITCH_PX;
   }
 
-  // 5 cm per zone connection pair.
-  return 0.05 * pixelsPerMeter;
+  return MANIFOLD_ZONE_PITCH_M * pixelsPerMeter;
 }
 
 /**
- * `pairGapPx` separates a single zone's supply and return ports. `pitchPx` is a
- * typical per-zone width (pair gap plus clearance) used only to size the manifold
- * by zone count — connections themselves aren't confined to a grid and can be
- * freely slid anywhere along the manifold's length.
+ * `pairGapPx` separates a single zone's supply and return ports; it is half the
+ * zone pitch, so every line — within a pair or across neighbouring zones — sits
+ * one half-pitch (2.5 cm) from the next. `pitchPx` is the per-zone width, used
+ * only to size the manifold by zone count — connections themselves aren't
+ * confined to a grid and can be freely slid anywhere along the length.
  */
 function getManifoldSpacing(pixelsPerMeter: number): { pitchPx: number; pairGapPx: number } {
-  const basePitchPx = Math.max(5, getManifoldZonePitchPx(pixelsPerMeter));
-  const pairGapPx = Math.max(6, basePitchPx * MANIFOLD_PAIR_GAP_FACTOR);
-  const pitchPx = Math.max(basePitchPx, pairGapPx + LEADER_CLEARANCE_PX);
-  return { pitchPx, pairGapPx };
+  const pitchPx = getManifoldZonePitchPx(pixelsPerMeter);
+  return { pitchPx, pairGapPx: pitchPx / 2 };
 }
 
 export function getManifoldLayout(
@@ -141,4 +140,23 @@ export function clampManifoldOffset(
 ): number {
   const halfSpan = getManifoldOffsetHalfSpan(manifold, zones, pixelsPerMeter);
   return Math.max(-halfSpan, Math.min(halfSpan, rawOffsetPx));
+}
+
+/**
+ * Nearest point on the manifold's connection edge to an arbitrary point, clamped
+ * within its ends — where a dragged connection dot snaps to.
+ */
+export function clampPointToManifoldEdge(
+  manifold: Manifold,
+  zones: Zone[],
+  pixelsPerMeter: number,
+  point: Point,
+): Point {
+  const offsetPx = clampManifoldOffset(
+    manifold,
+    zones,
+    pixelsPerMeter,
+    projectPointOntoManifold(manifold, point),
+  );
+  return pointAtManifoldOffset(manifold, offsetPx);
 }

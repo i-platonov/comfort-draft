@@ -9,7 +9,7 @@ import {
   getIncomingLegDirection,
   getStubExitDirection,
   midpoint,
-  offsetOrthogonalPath,
+  offsetPolyline,
   snapElbowPoint,
   snapFirstLegPoint,
 } from '../../geometry/manualRouting';
@@ -221,8 +221,8 @@ export default function Canvas() {
 
     return {
       path,
-      lineA: offsetOrthogonalPath(path, LEADER_DOUBLE_LINE_HALF_GAP_PX),
-      lineB: offsetOrthogonalPath(path, -LEADER_DOUBLE_LINE_HALF_GAP_PX),
+      lineA: offsetPolyline(path, LEADER_DOUBLE_LINE_HALF_GAP_PX),
+      lineB: offsetPolyline(path, -LEADER_DOUBLE_LINE_HALF_GAP_PX),
       color: zone.color,
     };
   })();
