@@ -1,6 +1,6 @@
 import { Manifold, Point, Zone } from '../types';
 import { getSpiralStubs, roundPathCorners } from './spiral';
-import { distancePx } from './length';
+import { distanceMm } from './length';
 import { ManifoldLayout, ZoneManifoldPorts, getZoneManifoldPorts } from './manifoldRouting';
 
 const EPSILON = 1e-6;
@@ -13,20 +13,24 @@ function unitDelta(from: Point, to: Point): Point {
   return { x: dx / len, y: dy / len };
 }
 
-/** Half-gap (px) used to render the single leader path as two parallel offset lines. */
-export const LEADER_DOUBLE_LINE_HALF_GAP_PX = 3;
+/**
+ * The pitch a leader's supply and return run at: the zone's own pipe spacing, because the
+ * pair is a continuation of the spiral's two ends, which sit exactly one spacing apart.
+ * Anything else puts a visible step where the leader meets the pipe it continues.
+ *
+ * It narrows to `MANIFOLD_LINE_PITCH_MM` only at the manifold, where the tappings are.
+ * Both are physical sizes, so the pair holds its scale against the rooms at any zoom
+ * instead of keeping a fixed number of screen pixels.
+ */
+export function leaderPairPitchMm(pipeSpacingMm: number): number {
+  return pipeSpacingMm;
+}
 
 /**
  * How far a leader may cut diagonally on its final approach into the manifold. A longer
  * run is bent back onto the grid so only this last stretch runs at an angle.
  */
-export const MAX_DIAGONAL_APPROACH_M = 2;
-
-/** `MAX_DIAGONAL_APPROACH_M` in pixels; unlimited when the drawing scale is unknown. */
-export function maxDiagonalApproachPx(pixelsPerMeter: number): number {
-  if (!Number.isFinite(pixelsPerMeter) || pixelsPerMeter <= 0) return Infinity;
-  return MAX_DIAGONAL_APPROACH_M * pixelsPerMeter;
-}
+export const MAX_DIAGONAL_APPROACH_MM = 2000;
 
 /**
  * Unit vector pointing outward from the spiral at the given stub — i.e. the
@@ -52,11 +56,11 @@ export function snapFirstLegPoint(
   anchor: Point,
   direction: Point,
   raw: Point,
-  minLengthPx = 15,
+  minLengthMm = 150,
 ): Point {
   const dx = raw.x - anchor.x;
   const dy = raw.y - anchor.y;
-  const t = Math.max(dx * direction.x + dy * direction.y, minLengthPx);
+  const t = Math.max(dx * direction.x + dy * direction.y, minLengthMm);
   return { x: anchor.x + direction.x * t, y: anchor.y + direction.y * t };
 }
 
@@ -86,7 +90,7 @@ export function snapElbowPoint(
   prev: Point,
   raw: Point,
   incomingDirection: Point,
-  minCornerPx = 15,
+  minCornerMm = 150,
 ): Point {
   const dx = raw.x - prev.x;
   const dy = raw.y - prev.y;
@@ -99,7 +103,7 @@ export function snapElbowPoint(
     if (movement * forwardSign < 0) {
       const cross = incomingHorizontal ? dy : dx;
       const crossSign = Math.sign(cross) || 1;
-      const clamped = crossSign * Math.max(Math.abs(cross), minCornerPx);
+      const clamped = crossSign * Math.max(Math.abs(cross), minCornerMm);
       return incomingHorizontal
         ? { x: prev.x, y: prev.y + clamped }
         : { x: prev.x + clamped, y: prev.y };
@@ -114,13 +118,13 @@ export function isPointOnManifold(
   point: Point,
   manifold: Manifold,
   layout: ManifoldLayout,
-  marginPx = 10,
+  marginMm = 100,
 ): boolean {
   const dx = point.x - manifold.position.x;
   const dy = point.y - manifold.position.y;
   const u = dx * layout.tangent.x + dy * layout.tangent.y;
   const v = dx * layout.normal.x + dy * layout.normal.y;
-  return Math.abs(u) <= layout.lengthPx / 2 + marginPx && Math.abs(v) <= layout.thicknessPx / 2 + marginPx;
+  return Math.abs(u) <= layout.lengthMm / 2 + marginMm && Math.abs(v) <= layout.thicknessMm / 2 + marginMm;
 }
 
 /**
@@ -135,7 +139,7 @@ export function orthogonalConnector(
   incomingDirection: Point,
   from: Point,
   to: Point,
-  minKickPx = 15,
+  minKickMm = 150,
 ): Point[] {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
@@ -157,8 +161,8 @@ export function orthogonalConnector(
     // separation through the middle segment, then converge into `to` at the end.
     const crossSign = Math.abs(crossDelta) > EPSILON ? Math.sign(crossDelta) : 1;
     const kick = incomingHorizontal
-      ? { x: from.x, y: from.y + crossSign * minKickPx }
-      : { x: from.x + crossSign * minKickPx, y: from.y };
+      ? { x: from.x, y: from.y + crossSign * minKickMm }
+      : { x: from.x + crossSign * minKickMm, y: from.y };
     const aligned = incomingHorizontal ? { x: to.x, y: kick.y } : { x: kick.x, y: to.y };
     return [kick, aligned, to];
   }
@@ -168,21 +172,21 @@ export function orthogonalConnector(
 }
 
 /**
- * Tolerance (px) for treating two points as axis-aligned — both when repairing a path
+ * Tolerance (mm) for treating two points as axis-aligned — both when repairing a path
  * after a drag and when deciding whether a rendered segment is "straight enough" to offer
  * as a draggable row/col slider. Points fed through several chained computations (spiral
  * generation, projections, reflows) rarely land on an exactly-equal coordinate, so the
  * geometric EPSILON is too tight for either purpose and would falsely treat clean
  * horizontal/vertical segments as diagonal.
  */
-export const DRAG_ALIGN_TOLERANCE_PX = 2;
+export const DRAG_ALIGN_TOLERANCE_MM = 20;
 
 /**
  * Insert an L-bend between any two consecutive points that aren't (nearly) axis-aligned;
  * points within tolerance are snapped exactly onto the shared axis instead of bending, so
  * a drag that was meant to be a plain move doesn't spuriously add a waypoint.
  */
-function orthogonalizePath(points: Point[], tolerancePx = DRAG_ALIGN_TOLERANCE_PX): Point[] {
+function orthogonalizePath(points: Point[], toleranceMm = DRAG_ALIGN_TOLERANCE_MM): Point[] {
   if (points.length < 2) return [...points];
   const out: Point[] = [points[0]];
   for (let i = 1; i < points.length; i++) {
@@ -190,9 +194,9 @@ function orthogonalizePath(points: Point[], tolerancePx = DRAG_ALIGN_TOLERANCE_P
     const cur = points[i];
     const dx = Math.abs(prev.x - cur.x);
     const dy = Math.abs(prev.y - cur.y);
-    if (dx < tolerancePx && dx <= dy) {
+    if (dx < toleranceMm && dx <= dy) {
       out.push({ x: prev.x, y: cur.y });
-    } else if (dy < tolerancePx) {
+    } else if (dy < toleranceMm) {
       out.push({ x: cur.x, y: prev.y });
     } else {
       out.push({ x: cur.x, y: prev.y });
@@ -203,15 +207,15 @@ function orthogonalizePath(points: Point[], tolerancePx = DRAG_ALIGN_TOLERANCE_P
 }
 
 /** Drop collinear midpoints so a straightened bend collapses instead of leaving a redundant kink. */
-function simplifyCollinearPath(points: Point[], tolerancePx = DRAG_ALIGN_TOLERANCE_PX): Point[] {
+function simplifyCollinearPath(points: Point[], toleranceMm = DRAG_ALIGN_TOLERANCE_MM): Point[] {
   if (points.length < 3) return [...points];
   const out: Point[] = [points[0]];
   for (let i = 1; i < points.length - 1; i++) {
     const a = out[out.length - 1];
     const b = points[i];
     const c = points[i + 1];
-    const collinearV = Math.abs(a.x - b.x) < tolerancePx && Math.abs(b.x - c.x) < tolerancePx;
-    const collinearH = Math.abs(a.y - b.y) < tolerancePx && Math.abs(b.y - c.y) < tolerancePx;
+    const collinearV = Math.abs(a.x - b.x) < toleranceMm && Math.abs(b.x - c.x) < toleranceMm;
+    const collinearH = Math.abs(a.y - b.y) < toleranceMm && Math.abs(b.y - c.y) < toleranceMm;
     if (collinearV || collinearH) continue;
     out.push(b);
   }
@@ -259,7 +263,7 @@ const MAX_MITRE_RATIO = 4;
 
 /**
  * Offset a polyline by a signed distance: each segment is translated along
- * `signedGap * rotate90CW(segmentDirection)`, and each interior corner is placed where
+ * `signedGapMm * rotate90CW(segmentDirection)`, and each interior corner is placed where
  * the two adjacent offset segments intersect. Using the same rotation for every segment
  * (rather than choosing a side per corner) is what makes the result a valid, non-crossing
  * parallel path — whichever side ends up "inside" a given bend automatically gets a
@@ -270,7 +274,7 @@ const MAX_MITRE_RATIO = 4;
  * Used purely as a rendering trick to draw the single leader path as a doubled line (one
  * offset copy on each side) representing the supply+return pair.
  */
-export function offsetPolyline(path: Point[], signedGap: number): Point[] {
+export function offsetPolyline(path: Point[], signedGapMm: number): Point[] {
   if (path.length < 2) return [...path];
 
   const directions: Point[] = [];
@@ -279,7 +283,7 @@ export function offsetPolyline(path: Point[], signedGap: number): Point[] {
     const direction = unitDelta(path[i - 1], path[i]);
     const normal = rotate90CW(direction);
     directions.push(direction);
-    displacements.push({ x: signedGap * normal.x, y: signedGap * normal.y });
+    displacements.push({ x: signedGapMm * normal.x, y: signedGapMm * normal.y });
   }
 
   return path.map((point, i) => {
@@ -291,7 +295,7 @@ export function offsetPolyline(path: Point[], signedGap: number): Point[] {
     const mitre = intersectLines(fromIncoming, directions[i - 1], fromOutgoing, directions[i]);
     // Parallel (a straight-through corner) or a spike from an almost-180° fold: the
     // plain displaced corner is the better answer.
-    if (!mitre || distancePx(mitre, point) > Math.abs(signedGap) * MAX_MITRE_RATIO) {
+    if (!mitre || distanceMm(mitre, point) > Math.abs(signedGapMm) * MAX_MITRE_RATIO) {
       return fromOutgoing;
     }
     return mitre;
@@ -306,7 +310,7 @@ export function midpoint(a: Point, b: Point): Point {
 /**
  * The auto-generated tail of a leader: how it leaves the last drawn waypoint and arrives
  * at `target` (the midpoint between the zone's two manifold ports). The pipe may cut
- * straight across at any angle, but only for `maxDiagonalPx` — a longer approach gets one
+ * straight across at any angle, but only for `maxDiagonalMm` — a longer approach gets one
  * bend inserted, so it travels squarely up to the point where a diagonal of that length
  * reaches the target. When neither axis fits inside the cap no diagonal is possible at
  * all and the connector stays fully square.
@@ -319,31 +323,31 @@ export function manifoldApproachPoints(
   incomingDirection: Point,
   from: Point,
   target: Point,
-  maxDiagonalPx: number,
+  maxDiagonalMm: number,
 ): Point[] {
   const dx = target.x - from.x;
   const dy = target.y - from.y;
 
   // Square already: an ordinary horizontal/vertical run, which has no length limit.
-  if (Math.abs(dx) < DRAG_ALIGN_TOLERANCE_PX || Math.abs(dy) < DRAG_ALIGN_TOLERANCE_PX) return [target];
-  if (Math.hypot(dx, dy) <= maxDiagonalPx) return [target];
+  if (Math.abs(dx) < DRAG_ALIGN_TOLERANCE_MM || Math.abs(dy) < DRAG_ALIGN_TOLERANCE_MM) return [target];
+  if (Math.hypot(dx, dy) <= maxDiagonalMm) return [target];
 
   // The straight leg runs along the axis with more distance to cover; a capped diagonal
   // can only finish the job if the whole of the other axis fits within the cap.
   const legIsHorizontal = Math.abs(dx) >= Math.abs(dy);
   const crossDelta = legIsHorizontal ? dy : dx;
-  if (Math.abs(crossDelta) > maxDiagonalPx) {
+  if (Math.abs(crossDelta) > maxDiagonalMm) {
     return orthogonalConnector(incomingDirection, from, target);
   }
 
-  // Stop the leg short of the target by however far a `maxDiagonalPx` hypotenuse reaches
+  // Stop the leg short of the target by however far a `maxDiagonalMm` hypotenuse reaches
   // back along the leg's own axis. `alongDelta` always exceeds that (the direct distance
   // is past the cap), so the leg never overshoots and doubles back.
   const alongDelta = legIsHorizontal ? dx : dy;
-  const runBackPx = Math.sqrt(maxDiagonalPx * maxDiagonalPx - crossDelta * crossDelta);
+  const runBackMm = Math.sqrt(maxDiagonalMm * maxDiagonalMm - crossDelta * crossDelta);
   const bend = legIsHorizontal
-    ? { x: target.x - Math.sign(alongDelta) * runBackPx, y: from.y }
-    : { x: from.x, y: target.y - Math.sign(alongDelta) * runBackPx };
+    ? { x: target.x - Math.sign(alongDelta) * runBackMm, y: from.y }
+    : { x: from.x, y: target.y - Math.sign(alongDelta) * runBackMm };
 
   // Arriving along the leg's axis but pointing the other way would fold the pipe back on
   // itself; a square connector makes that turn properly instead.
@@ -365,13 +369,13 @@ export function assembleLeaderPath(
   anchor: Point,
   waypoints: Point[],
   target: Point,
-  maxDiagonalPx: number,
+  maxDiagonalMm = MAX_DIAGONAL_APPROACH_MM,
 ): Point[] {
   const from = waypoints.length > 0 ? waypoints[waypoints.length - 1] : anchor;
   // With nothing drawn yet there is no leg to fold back on, so aiming straight at the
   // target is a direction the U-turn check will never object to.
   const incomingDirection = getIncomingLegDirection(unitDelta(anchor, target), [anchor, ...waypoints]);
-  return [anchor, ...waypoints, ...manifoldApproachPoints(incomingDirection, from, target, maxDiagonalPx)];
+  return [anchor, ...waypoints, ...manifoldApproachPoints(incomingDirection, from, target, maxDiagonalMm)];
 }
 
 /** Live (unfinished) preview of the leader path while the user is still clicking elbows. */
@@ -396,7 +400,7 @@ function landOnPort(
   offsetLine: Point[],
   path: Point[],
   ports: ZoneManifoldPorts,
-  signedGap: number,
+  signedGapMm: number,
 ): Point[] {
   if (path.length < 2) return offsetLine;
 
@@ -404,7 +408,7 @@ function landOnPort(
   const normal = rotate90CW(unitDelta(path[path.length - 2], target));
   const sideOf = (port: Point) =>
     (port.x - target.x) * normal.x + (port.y - target.y) * normal.y;
-  const port = sideOf(ports.supplyPort) * signedGap >= 0 ? ports.supplyPort : ports.returnPort;
+  const port = sideOf(ports.supplyPort) * signedGapMm >= 0 ? ports.supplyPort : ports.returnPort;
 
   return [...offsetLine.slice(0, -1), port];
 }
@@ -416,32 +420,25 @@ export interface LeaderRenderLines {
 
 /**
  * The two lines drawn for a leader — purely a rendering concern, the routed length is
- * measured off the centreline. Corners are filleted at `bendRadiusPx` (a real pipe can't
- * turn square), the pair is drawn a fixed gap either side of the centreline so it reads as
- * supply plus return at any zoom, and the final run lands on the zone's actual ports.
+ * measured off the centreline. The pair runs at the zone's pipe spacing, so it continues
+ * the spiral's two ends without a step, and its last segment lands on the zone's actual
+ * manifold ports — tapering from that spacing down to the 25 mm tapping pitch.
  */
 export function buildLeaderRenderLines(
   leaderPath: Point[],
   ports: ZoneManifoldPorts,
-  bendRadiusPx: number,
+  pipeSpacingMm: number,
 ): LeaderRenderLines {
-  // An inner line offset by more than the fillet radius would turn itself inside out.
-  const radiusPx = Math.max(bendRadiusPx, LEADER_DOUBLE_LINE_HALF_GAP_PX * 2);
-  const rounded = roundPathCorners(leaderPath, radiusPx);
+  const halfGapMm = leaderPairPitchMm(pipeSpacingMm) / 2;
+  // A pipe can't turn square, and the inner line of the pair turns tighter than the
+  // centreline by a half-gap — so the centreline's radius has to clear that or the inner
+  // line folds through itself at the corner.
+  const radiusMm = Math.max(pipeSpacingMm / 2, halfGapMm * 2);
+  const rounded = roundPathCorners(leaderPath, radiusMm);
 
   return {
-    lineA: landOnPort(
-      offsetPolyline(rounded, LEADER_DOUBLE_LINE_HALF_GAP_PX),
-      rounded,
-      ports,
-      LEADER_DOUBLE_LINE_HALF_GAP_PX,
-    ),
-    lineB: landOnPort(
-      offsetPolyline(rounded, -LEADER_DOUBLE_LINE_HALF_GAP_PX),
-      rounded,
-      ports,
-      -LEADER_DOUBLE_LINE_HALF_GAP_PX,
-    ),
+    lineA: landOnPort(offsetPolyline(rounded, halfGapMm), rounded, ports, halfGapMm),
+    lineB: landOnPort(offsetPolyline(rounded, -halfGapMm), rounded, ports, -halfGapMm),
   };
 }
 
@@ -453,7 +450,6 @@ export function buildLeaderRenderLines(
 export function buildManualLeaderPaths(
   zones: Zone[],
   manifold: Manifold | null,
-  pixelsPerMeter: number,
 ): ManualLeaderPaths[] {
   if (!manifold) return [];
 
@@ -462,7 +458,7 @@ export function buildManualLeaderPaths(
     if (!zone.spiral || zone.spiral.length < 2) continue;
     const stubs = getSpiralStubs(zone.spiral);
     if (!stubs) continue;
-    const pair = getZoneManifoldPorts(manifold, zone, pixelsPerMeter);
+    const pair = getZoneManifoldPorts(manifold, zone);
     if (!pair) continue;
 
     results.push({
@@ -473,7 +469,7 @@ export function buildManualLeaderPaths(
             midpoint(stubs.start, stubs.end),
             zone.leaderWaypoints,
             midpoint(pair.supplyPort, pair.returnPort),
-            maxDiagonalApproachPx(pixelsPerMeter),
+            MAX_DIAGONAL_APPROACH_MM,
           )
         : null,
     });

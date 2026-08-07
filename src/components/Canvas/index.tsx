@@ -3,8 +3,9 @@ import Konva from 'konva';
 import { Arrow, Circle, Layer, Line, Rect, Stage, Text } from 'react-konva';
 import { useStore } from '../../state/store';
 import { getSpiralStubs, roundPathCorners } from '../../geometry/spiral';
+import { mm2ToSquareMeters } from '../../geometry/length';
 import {
-  LEADER_DOUBLE_LINE_HALF_GAP_PX,
+  leaderPairPitchMm,
   computeLeaderPreviewPath,
   getIncomingLegDirection,
   getStubExitDirection,
@@ -17,6 +18,7 @@ import DxfLayer from './DxfLayer';
 import ImageLayer from './ImageLayer';
 import LeaderLayer from './LeaderLayer';
 import ManifoldLayer from './ManifoldLayer';
+import MeasureLayer from './MeasureLayer';
 import ZoneLayer from './ZoneLayer';
 import { canvas } from '../../theme';
 
@@ -32,6 +34,9 @@ export default function Canvas() {
   });
   // Live mouse position for rect-zone preview (in stage/world coords)
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
+  // Where the pointer was on the last background-pan tick (world coords), so each move
+  // applies only its own increment; null whenever no pan drag is in progress.
+  const backgroundPanFromRef = useRef<{ x: number; y: number } | null>(null);
 
   const {
     background,
@@ -43,8 +48,8 @@ export default function Canvas() {
     drawRectStart,
     routing,
     calibration,
-    pixelsPerMeter,
-    stageScale,
+    measurement,
+    pxPerMm,
     stageX,
     stageY,
     setManifold,
@@ -54,9 +59,11 @@ export default function Canvas() {
     finishDrawRect,
     addRoutePoint,
     addCalibrationPoint,
+    addMeasurePoint,
     setStageTransform,
     selectZone,
     setToolMode,
+    moveBackground,
   } = useStore();
 
   useEffect(() => {
@@ -71,6 +78,16 @@ export default function Canvas() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // The view isn't part of the design, so a reloaded project arrives with no camera. Frame
+  // whatever it contains once, on mount, rather than dropping the user at a fixed zoom
+  // where a drawing measured in metres of millimetres could sit far off-screen.
+  const fitViewToContent = useStore((state) => state.fitViewToContent);
+  useEffect(() => {
+    fitViewToContent(viewport.width, viewport.height);
+    // Deliberately mount-only: refitting on every change would fight the user's own panning.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const getPointerPos = useCallback(() => {
     const stage = stageRef.current;
     if (!stage) return null;
@@ -79,10 +96,12 @@ export default function Canvas() {
     if (!position) return null;
 
     return {
-      x: (position.x - stageX) / stageScale,
-      y: (position.y - stageY) / stageScale,
+      // Screen pixels back to drawing millimetres — the only direction this conversion
+      // ever runs outside the Konva transform itself.
+      x: (position.x - stageX) / pxPerMm,
+      y: (position.y - stageY) / pxPerMm,
     };
-  }, [stageScale, stageX, stageY]);
+  }, [pxPerMm, stageX, stageY]);
 
   const handleStageClick = useCallback(() => {
     const position = getPointerPos();
@@ -115,6 +134,11 @@ export default function Canvas() {
       return;
     }
 
+    if (toolMode === 'measure') {
+      addMeasurePoint(position);
+      return;
+    }
+
     if (calibration.active) {
       addCalibrationPoint(position);
       return;
@@ -130,6 +154,7 @@ export default function Canvas() {
   }, [
     addCalibrationPoint,
     addDrawingPoint,
+    addMeasurePoint,
     addRoutePoint,
     calibration.active,
     drawRectStart,
@@ -149,7 +174,28 @@ export default function Canvas() {
     }
   }, [closeZone, toolMode]);
 
+  // Background panning is a press-drag-release on the stage itself rather than a draggable
+  // Konva node: a DXF's thin lines are near-impossible to grab, so the whole canvas is the
+  // handle. Deltas are taken in world coords, so a pan tracks the pointer at any zoom.
+  const handleMouseDown = useCallback(() => {
+    if (toolMode !== 'panBackground' || !background) return;
+    backgroundPanFromRef.current = getPointerPos();
+  }, [background, getPointerPos, toolMode]);
+
+  const endBackgroundPan = useCallback(() => {
+    backgroundPanFromRef.current = null;
+  }, []);
+
   const handleMouseMove = useCallback(() => {
+    const panFrom = backgroundPanFromRef.current;
+    if (panFrom) {
+      const pos = getPointerPos();
+      if (pos) {
+        moveBackground(pos.x - panFrom.x, pos.y - panFrom.y);
+        backgroundPanFromRef.current = pos;
+      }
+      return;
+    }
     if (toolMode === 'drawRect' && drawRectStart) {
       const pos = getPointerPos();
       if (pos) setMousePos(pos);
@@ -158,8 +204,14 @@ export default function Canvas() {
     if (toolMode === 'routeLeader' && routing) {
       const pos = getPointerPos();
       if (pos) setMousePos(pos);
+      return;
     }
-  }, [drawRectStart, getPointerPos, routing, toolMode]);
+    // While the tape's far end is unplaced, follow the pointer so the reading is live.
+    if (toolMode === 'measure' && measurement.start && !measurement.end) {
+      const pos = getPointerPos();
+      if (pos) setMousePos(pos);
+    }
+  }, [drawRectStart, getPointerPos, measurement, moveBackground, routing, toolMode]);
 
   const handleWheel = useCallback(
     (event: Konva.KonvaEventObject<WheelEvent>) => {
@@ -171,12 +223,12 @@ export default function Canvas() {
       if (!pointer) return;
 
       const mousePointTo = {
-        x: (pointer.x - stageX) / stageScale,
-        y: (pointer.y - stageY) / stageScale,
+        x: (pointer.x - stageX) / pxPerMm,
+        y: (pointer.y - stageY) / pxPerMm,
       };
 
       const newScale =
-        event.evt.deltaY > 0 ? stageScale / ZOOM_FACTOR : stageScale * ZOOM_FACTOR;
+        event.evt.deltaY > 0 ? pxPerMm / ZOOM_FACTOR : pxPerMm * ZOOM_FACTOR;
 
       setStageTransform(
         newScale,
@@ -184,7 +236,7 @@ export default function Canvas() {
         pointer.y - mousePointTo.y * newScale,
       );
     },
-    [setStageTransform, stageScale, stageX, stageY],
+    [setStageTransform, pxPerMm, stageX, stageY],
   );
 
   const drawingFlatPoints = drawingPoints.flatMap((point) => [point.x, point.y]);
@@ -194,9 +246,12 @@ export default function Canvas() {
     toolMode === 'drawZone' ||
     toolMode === 'drawRect' ||
     toolMode === 'placeManifold' ||
-    toolMode === 'routeLeader'
+    toolMode === 'routeLeader' ||
+    toolMode === 'measure'
       ? 'crosshair'
-      : 'default';
+      : toolMode === 'panBackground'
+        ? 'grab'
+        : 'default';
 
   // Live preview of the leader path (rendered doubled) while routing.
   const routePreview = (() => {
@@ -221,16 +276,14 @@ export default function Canvas() {
     if (!drawn) return null;
 
     // Filleted like the committed leader, so the preview shows the pipe that will be laid.
-    const bendRadiusPx = Math.max(
-      ((zone.spacingMm / 1000) * pixelsPerMeter) / 2,
-      LEADER_DOUBLE_LINE_HALF_GAP_PX * 2,
-    );
-    const path = roundPathCorners(drawn, bendRadiusPx);
+    const halfGapMm = leaderPairPitchMm(zone.spacingMm) / 2;
+    const bendRadiusMm = Math.max(zone.spacingMm / 2, halfGapMm * 2);
+    const path = roundPathCorners(drawn, bendRadiusMm);
 
     return {
       path,
-      lineA: offsetPolyline(path, LEADER_DOUBLE_LINE_HALF_GAP_PX),
-      lineB: offsetPolyline(path, -LEADER_DOUBLE_LINE_HALF_GAP_PX),
+      lineA: offsetPolyline(path, halfGapMm),
+      lineB: offsetPolyline(path, -halfGapMm),
       color: zone.color,
     };
   })();
@@ -246,10 +299,9 @@ export default function Canvas() {
         }
       : null;
 
-  const rectPreviewAreaM2 =
-    rectPreview && pixelsPerMeter > 0
-      ? (rectPreview.width * rectPreview.height) / (pixelsPerMeter * pixelsPerMeter)
-      : null;
+  const rectPreviewAreaM2 = rectPreview
+    ? mm2ToSquareMeters(rectPreview.width * rectPreview.height)
+    : null;
 
   return (
     <Stage
@@ -258,19 +310,22 @@ export default function Canvas() {
       height={viewport.height}
       onClick={handleStageClick}
       onDblClick={handleStageDblClick}
+      onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
+      onMouseUp={endBackgroundPan}
+      onMouseLeave={endBackgroundPan}
       onWheel={handleWheel}
       draggable={toolMode === 'select' && !calibration.active}
       x={stageX}
       y={stageY}
-      scaleX={stageScale}
-      scaleY={stageScale}
+      scaleX={pxPerMm}
+      scaleY={pxPerMm}
       onDragEnd={(event) => {
         // Dragend bubbles up from any draggable descendant (vertex handles,
         // the manifold, ...) with event.target left as that node — only
         // react when the Stage itself was the thing being dragged (panning).
         if (event.target !== stageRef.current) return;
-        setStageTransform(stageScale, event.target.x(), event.target.y());
+        setStageTransform(pxPerMm, event.target.x(), event.target.y());
       }}
       style={{ cursor, background: canvas.background }}
     >
@@ -281,17 +336,23 @@ export default function Canvas() {
       {background?.kind === 'image' && (
         <ImageLayer
           src={background.src}
-          fitX={background.fitX}
-          fitY={background.fitY}
-          fitScale={background.fitScale}
+          x={background.x}
+          y={background.y}
+          mmPerPixel={background.mmPerPixel}
           naturalWidth={background.naturalWidth}
           naturalHeight={background.naturalHeight}
         />
       )}
 
-      <ZoneLayer zones={zones} selectedZoneId={selectedZoneId} toolMode={toolMode} />
-      <LeaderLayer zones={zones} manifold={manifold} pixelsPerMeter={pixelsPerMeter} />
-      <ManifoldLayer manifold={manifold} zones={zones} pixelsPerMeter={pixelsPerMeter} />
+      <ZoneLayer
+        zones={zones}
+        selectedZoneId={selectedZoneId}
+        toolMode={toolMode}
+        pxPerMm={pxPerMm}
+      />
+      <LeaderLayer zones={zones} manifold={manifold} pxPerMm={pxPerMm} />
+      <ManifoldLayer manifold={manifold} zones={zones} pxPerMm={pxPerMm} />
+      <MeasureLayer measurement={measurement} pointer={mousePos} pxPerMm={pxPerMm} />
 
       <Layer>
         {/* Free-polygon drawing preview */}

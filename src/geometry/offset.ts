@@ -88,12 +88,12 @@ export function offsetPolygon(polygon: Polygon, distance: number): Polygon | nul
 /**
  * Generate a series of inward-offset polygons until the polygon collapses.
  */
-export function generateOffsetRings(polygon: Polygon, spacingPx: number): Polygon[] {
+export function generateOffsetRings(polygon: Polygon, spacingMm: number): Polygon[] {
   const rings: Polygon[] = [polygon];
   let current = polygon;
 
   for (let i = 0; i < 1000; i++) {
-    const next = offsetPolygon(current, spacingPx);
+    const next = offsetPolygon(current, spacingMm);
     if (!next || next.points.length < 3) break;
     rings.push(next);
     current = next;

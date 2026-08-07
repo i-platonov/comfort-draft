@@ -34,6 +34,7 @@ function DxfLayer({ entities, transform }: Props) {
             points={[start.x, start.y, end.x, end.y]}
             stroke={canvas.planLine}
             strokeWidth={1}
+            strokeScaleEnabled={false}
             listening={false}
           />,
         );
@@ -52,6 +53,7 @@ function DxfLayer({ entities, transform }: Props) {
             points={points}
             stroke={canvas.planLine}
             strokeWidth={1}
+            strokeScaleEnabled={false}
             closed={entity.closed}
             listening={false}
           />,
@@ -69,6 +71,7 @@ function DxfLayer({ entities, transform }: Props) {
             radius={entity.radius * transform.scale}
             stroke={canvas.planLine}
             strokeWidth={1}
+            strokeScaleEnabled={false}
             listening={false}
           />,
         );
@@ -90,6 +93,7 @@ function DxfLayer({ entities, transform }: Props) {
             rotation={startAngle}
             stroke={canvas.planLine}
             strokeWidth={1}
+            strokeScaleEnabled={false}
             fill=""
             listening={false}
           />,

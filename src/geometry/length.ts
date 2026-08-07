@@ -1,43 +1,39 @@
 import { Point, PipePath } from '../types';
 
-/**
- * Compute the Euclidean distance between two points (in pixels).
- */
-export function distancePx(a: Point, b: Point): number {
+/** Straight-line distance between two points, mm. */
+export function distanceMm(a: Point, b: Point): number {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-/**
- * Compute the total length of a polyline path (in pixels).
- */
-export function pathLengthPx(path: PipePath): number {
+/** Total length of a polyline, mm. */
+export function pathLengthMm(path: PipePath): number {
   let total = 0;
   for (let i = 1; i < path.length; i++) {
-    total += distancePx(path[i - 1], path[i]);
+    total += distanceMm(path[i - 1], path[i]);
   }
   return total;
 }
 
 /**
- * Convert pixel length to meters using the calibration factor.
+ * Millimetres to metres, for display only. Lengths are stored and computed in mm; metres
+ * exist purely because that's how pipe runs are quoted.
  */
-export function pxToMeters(px: number, pixelsPerMeter: number): number {
-  if (pixelsPerMeter <= 0) return 0;
-  return px / pixelsPerMeter;
+export function mmToMeters(mm: number): number {
+  return mm / 1000;
+}
+
+/** Square millimetres to square metres, for display only. */
+export function mm2ToSquareMeters(mm2: number): number {
+  return mm2 / 1_000_000;
 }
 
 /**
- * Convert meters to pixels using the calibration factor.
+ * A distance as a person reading a plan wants it: millimetres, the working unit, with the
+ * metre value alongside once the run is long enough for metres to be the easier number.
  */
-export function metersToPx(m: number, pixelsPerMeter: number): number {
-  return m * pixelsPerMeter;
-}
-
-/**
- * Compute the length of a leader pipe from a stub point to the manifold (pixels).
- */
-export function leaderLengthPx(stubPoint: Point, manifoldPos: Point): number {
-  return distancePx(stubPoint, manifoldPos);
+export function formatDistanceMm(mm: number): string {
+  const millimetres = `${Math.round(mm).toLocaleString('en-GB')} mm`;
+  return mm >= 1000 ? `${millimetres}  ·  ${(mm / 1000).toFixed(2)} m` : millimetres;
 }

@@ -12,6 +12,10 @@ function useToolHint(): string | null {
       return 'Click first corner, then click opposite corner to create a rectangle zone.';
     case 'placeManifold':
       return 'Click on canvas to place the manifold.';
+    case 'measure':
+      return 'Click two points to measure the distance between them. Esc clears the tape.';
+    case 'panBackground':
+      return 'Drag anywhere to move the floor plan under your zones. Zones and the manifold stay put.';
     case 'routeLeader':
       return routing
         ? 'Drawing leader path — click to add points (horizontal/vertical only), click the manifold to connect both supply and return. Esc to cancel.'

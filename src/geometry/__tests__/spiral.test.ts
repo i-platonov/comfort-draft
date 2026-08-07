@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pathLengthPx } from '../length';
+import { pathLengthMm } from '../length';
 import { generateSerpentine, getSpiralStubs } from '../spiral';
 
 const rect = (w: number, h: number) => ({
@@ -103,13 +103,13 @@ describe('generateSerpentine – path quality', () => {
   it('generates a longer path for smaller spacing (same zone)', () => {
     const loose = generateSerpentine(rect(400, 400), 80);
     const tight = generateSerpentine(rect(400, 400), 40);
-    expect(pathLengthPx(tight)).toBeGreaterThan(pathLengthPx(loose));
+    expect(pathLengthMm(tight)).toBeGreaterThan(pathLengthMm(loose));
   });
 
   it('path length for 200×200 zone at 20 px spacing is within expected bounds', () => {
     // ~10 passes × 200 px each ≈ 2000 px + arc overhead
     const path = generateSerpentine(rect(200, 200), 20);
-    const len = pathLengthPx(path);
+    const len = pathLengthMm(path);
     // At least as long as 5 × 200 (conservative) and not more than 50 × 200 (very loose upper)
     expect(len).toBeGreaterThan(5 * 200);
     expect(len).toBeLessThan(50 * 200);

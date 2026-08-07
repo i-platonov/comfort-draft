@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pathLengthPx } from '../length';
+import { pathLengthMm } from '../length';
 import { generateSerpentine } from '../spiral';
 
 const rect = (w: number, h: number) => ({
@@ -31,7 +31,7 @@ describe('generateSerpentine padding', () => {
     const withoutPadding = generateSerpentine(rect(400, 400), 40, undefined, 0);
     const withPadding = generateSerpentine(rect(400, 400), 40, undefined, 80);
 
-    expect(pathLengthPx(withPadding)).toBeLessThan(pathLengthPx(withoutPadding));
+    expect(pathLengthMm(withPadding)).toBeLessThan(pathLengthMm(withoutPadding));
   });
 
   it('returns an empty path when padding leaves no room for the spiral', () => {

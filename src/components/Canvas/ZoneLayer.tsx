@@ -39,9 +39,14 @@ interface Props {
   zones: Zone[];
   selectedZoneId: string | null;
   toolMode: ToolMode;
+  /** Screen pixels per millimetre — handles are sized in screen terms, not drawing ones. */
+  pxPerMm: number;
 }
 
-function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
+const VERTEX_HANDLE_RADIUS_PX = 6;
+const STUB_DOT_RADIUS_PX = 4;
+
+function ZoneLayer({ zones, selectedZoneId, toolMode, pxPerMm }: Props) {
   const updateZoneVertex = useStore((state) => state.updateZoneVertex);
   const selectZone = useStore((state) => state.selectZone);
   const setToolMode = useStore((state) => state.setToolMode);
@@ -68,6 +73,9 @@ function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
       anim.stop();
     };
   }, [selectedZoneId]);
+
+  const vertexHandleRadiusMm = VERTEX_HANDLE_RADIUS_PX / pxPerMm;
+  const stubDotRadiusMm = STUB_DOT_RADIUS_PX / pxPerMm;
 
   return (
     <Layer>
@@ -120,6 +128,7 @@ function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
                   closed
                   stroke={canvas.selectionDashAlt}
                   strokeWidth={2.5}
+                  strokeScaleEnabled={false}
                   dash={SELECTED_DASH}
                   listening={false}
                 />
@@ -129,6 +138,7 @@ function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
                   closed
                   stroke={canvas.selectionDash}
                   strokeWidth={2.5}
+                  strokeScaleEnabled={false}
                   dash={SELECTED_DASH}
                   listening={false}
                 />
@@ -140,6 +150,7 @@ function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
                 points={zone.spiral.flatMap((point) => [point.x, point.y])}
                 stroke={zone.color}
                 strokeWidth={1.5}
+                strokeScaleEnabled={false}
                 opacity={0.85}
                 listening={false}
               />
@@ -156,19 +167,21 @@ function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
                     <Circle
                       x={stubs.start.x}
                       y={stubs.start.y}
-                      radius={4}
+                      radius={stubDotRadiusMm}
                       fill={zone.leaderWaypoints ? canvas.stubRouted : canvas.stubUnrouted}
                       stroke={canvas.stubOutline}
                       strokeWidth={1}
+                      strokeScaleEnabled={false}
                       listening={false}
                     />
                     <Circle
                       x={stubs.end.x}
                       y={stubs.end.y}
-                      radius={4}
+                      radius={stubDotRadiusMm}
                       fill={zone.leaderWaypoints ? canvas.stubRouted : canvas.stubUnrouted}
                       stroke={canvas.stubOutline}
                       strokeWidth={1}
+                      strokeScaleEnabled={false}
                       listening={false}
                     />
                   </>
@@ -182,10 +195,11 @@ function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
                   key={vertexIndex}
                   x={point.x}
                   y={point.y}
-                  radius={6}
+                  radius={vertexHandleRadiusMm}
                   fill={canvas.vertexFill}
                   stroke={zoneBorderColor}
                   strokeWidth={2}
+                  strokeScaleEnabled={false}
                   draggable
                   onClick={(event) => {
                     event.cancelBubble = true;

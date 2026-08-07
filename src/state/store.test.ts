@@ -1,15 +1,21 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Background, Zone } from '../types';
-import { createUfhStore, UFH_STORE_STORAGE_KEY } from './store';
+import {
+  CURRENT_SCHEMA_VERSION,
+  DEFAULT_PX_PER_MM,
+  createUfhStore,
+  partializeStoreState,
+  UFH_STORE_STORAGE_KEY,
+} from './store';
 
 const persistedImageBackground: Background = {
   kind: 'image',
   src: 'data:image/png;base64,abc123',
   naturalWidth: 640,
   naturalHeight: 320,
-  fitX: 10,
-  fitY: 20,
-  fitScale: 0.5,
+  x: 100,
+  y: 200,
+  mmPerPixel: 5,
 };
 
 const persistedZone: Zone = {
@@ -19,9 +25,9 @@ const persistedZone: Zone = {
   polygon: {
     points: [
       { x: 0, y: 0 },
-      { x: 200, y: 0 },
-      { x: 200, y: 200 },
-      { x: 0, y: 200 },
+      { x: 2000, y: 0 },
+      { x: 2000, y: 2000 },
+      { x: 0, y: 2000 },
     ],
   },
   spacingMm: 150,
@@ -29,11 +35,11 @@ const persistedZone: Zone = {
   connectionCorner: 'bottom-left',
   startDirection: 'vertical',
   spiral: null,
-  spiralLengthM: 0,
-  leaderLengthM: 0,
-  areaM2: 0,
+  spiralLengthMm: 0,
+  leaderLengthMm: 0,
+  areaMm2: 0,
   leaderWaypoints: null,
-  manifoldPortOffsetPx: null,
+  manifoldPortOffsetMm: null,
 };
 
 describe('useStore persistence', () => {
@@ -47,11 +53,10 @@ describe('useStore persistence', () => {
     store.setState({
       background: persistedImageBackground,
       zones: [persistedZone],
-      manifold: { position: { x: 40, y: 40 } },
-      pixelsPerMeter: 100,
+      manifold: { position: { x: 400, y: 400 } },
       maxCircuitLengthM: 120,
       defaultSpacingMm: 200,
-      stageScale: 1.4,
+      pxPerMm: 0.5,
       stageX: 12,
       stageY: -8,
       selectedZoneId: 'zone-1',
@@ -81,12 +86,11 @@ describe('useStore persistence', () => {
     const state = reloadedStore.getState();
 
     expect(state.background).toEqual(persistedImageBackground);
-    expect(state.manifold).toEqual({ position: { x: 40, y: 40 }, rotationDeg: 0 });
-    expect(state.pixelsPerMeter).toBe(100);
+    expect(state.manifold).toEqual({ position: { x: 400, y: 400 }, rotationDeg: 0 });
     expect(state.maxCircuitLengthM).toBe(120);
     expect(state.defaultSpacingMm).toBe(200);
-    // Stage transform (zoom/pan) is intentionally not persisted: it resets on reload.
-    expect(state.stageScale).toBe(1);
+    // The view (zoom/pan) is intentionally not persisted — it isn't part of the design.
+    expect(state.pxPerMm).toBe(DEFAULT_PX_PER_MM);
     expect(state.stageX).toBe(0);
     expect(state.stageY).toBe(0);
 
@@ -94,8 +98,8 @@ describe('useStore persistence', () => {
     expect(state.zones[0].polygon.points).toEqual(persistedZone.polygon.points);
     expect(state.zones[0].connectionCorner).toBe('bottom-left');
     expect(state.zones[0].spiral).not.toBeNull();
-    expect(state.zones[0].spiralLengthM).toBeGreaterThan(0);
-    expect(state.zones[0].areaM2).toBeGreaterThan(0);
+    expect(state.zones[0].spiralLengthMm).toBeGreaterThan(0);
+    expect(state.zones[0].areaMm2).toBeGreaterThan(0);
 
     expect(state.selectedZoneId).toBeNull();
     expect(state.toolMode).toBe('select');
@@ -115,8 +119,8 @@ describe('useStore persistence', () => {
     await reloadedStore.persist.rehydrate();
 
     reloadedStore.getState().addDrawingPoint({ x: 0, y: 0 });
-    reloadedStore.getState().addDrawingPoint({ x: 100, y: 0 });
-    reloadedStore.getState().addDrawingPoint({ x: 0, y: 100 });
+    reloadedStore.getState().addDrawingPoint({ x: 1000, y: 0 });
+    reloadedStore.getState().addDrawingPoint({ x: 0, y: 1000 });
     reloadedStore.getState().closeZone();
 
     const zones = reloadedStore.getState().zones;
@@ -129,8 +133,7 @@ describe('useStore persistence', () => {
       UFH_STORE_STORAGE_KEY,
       JSON.stringify({
         state: {
-          pixelsPerMeter: 100,
-          maxCircuitLengthM: 100,
+              maxCircuitLengthM: 100,
           defaultSpacingMm: 150,
           background: null,
           zones: [
@@ -142,15 +145,12 @@ describe('useStore persistence', () => {
               spacingMm: persistedZone.spacingMm,
               paddingMm: persistedZone.paddingMm,
               spiral: [{ x: 999, y: 999 }],
-              spiralLengthM: 999,
-              leaderLengthM: 999,
-              areaM2: 999,
+              spiralLengthMm: 999,
+              leaderLengthMm: 999,
+              areaMm2: 999,
             },
           ],
-          manifold: { position: { x: 40, y: 40 } },
-          stageScale: 1,
-          stageX: 0,
-          stageY: 0,
+          manifold: { position: { x: 400, y: 400 } },
         },
         version: 0,
       }),
@@ -164,24 +164,23 @@ describe('useStore persistence', () => {
     expect(zone.paddingMm).toBe(100);
     expect(zone.connectionCorner).toBe('bottom-left');
     expect(zone.spiral).not.toEqual([{ x: 999, y: 999 }]);
-    expect(zone.spiralLengthM).not.toBe(999);
-    expect(zone.leaderLengthM).not.toBe(999);
-    expect(zone.areaM2).not.toBe(999);
+    expect(zone.spiralLengthMm).not.toBe(999);
+    expect(zone.leaderLengthMm).not.toBe(999);
+    expect(zone.areaMm2).not.toBe(999);
   });
 
   it('recomputes a zone when its padding changes', () => {
     const store = createUfhStore();
 
     store.setState({
-      manifold: { position: { x: 40, y: 40 } },
-      pixelsPerMeter: 100,
+      manifold: { position: { x: 400, y: 400 } },
       zones: [
         {
           ...persistedZone,
           spiral: null,
-          spiralLengthM: 0,
-          leaderLengthM: 0,
-          areaM2: 0,
+          spiralLengthMm: 0,
+          leaderLengthMm: 0,
+          areaMm2: 0,
         },
       ],
     });
@@ -192,7 +191,7 @@ describe('useStore persistence', () => {
 
     expect(after.paddingMm).toBe(200);
     expect(after.spiral).not.toBeNull();
-    expect(after.spiralLengthM).not.toBe(before.spiralLengthM);
+    expect(after.spiralLengthMm).not.toBe(before.spiralLengthMm);
   });
 
   it('normalizes and persists manifold rotation', async () => {
@@ -212,14 +211,13 @@ describe('useStore persistence', () => {
     const store = createUfhStore();
 
     store.setState({
-      pixelsPerMeter: 100,
       zones: [
         {
           ...persistedZone,
           spiral: null,
-          spiralLengthM: 0,
-          leaderLengthM: 0,
-          areaM2: 0,
+          spiralLengthMm: 0,
+          leaderLengthMm: 0,
+          areaMm2: 0,
         },
       ],
     });
@@ -247,24 +245,24 @@ describe('useStore persistence', () => {
       polygon: {
         points: [
           { x: 0, y: 0 },
-          { x: 400, y: 0 },
-          { x: 400, y: 400 },
-          { x: 0, y: 400 },
+          { x: 4000, y: 0 },
+          { x: 4000, y: 4000 },
+          { x: 0, y: 4000 },
         ],
       },
-      spacingMm: 400, // 40 px at 100 px/m
+      spacingMm: 400,
       paddingMm: 0,
       connectionCorner: 'bottom-left',
       startDirection: 'vertical',
       spiral: null,
-      spiralLengthM: 0,
-      leaderLengthM: 0,
-      areaM2: 0,
+      spiralLengthMm: 0,
+      leaderLengthMm: 0,
+      areaMm2: 0,
       leaderWaypoints: null,
-      manifoldPortOffsetPx: null,
+      manifoldPortOffsetMm: null,
     };
 
-    store.setState({ pixelsPerMeter: 100, zones: [squareZone] });
+    store.setState({ zones: [squareZone] });
 
     const firstLegAxis = (path: Array<{ x: number; y: number }>) =>
       Math.abs(path[1].x - path[0].x) > Math.abs(path[1].y - path[0].y) ? 'x' : 'y';
@@ -276,8 +274,8 @@ describe('useStore persistence', () => {
 
     // Vertical start: first leg runs along Y, both stubs on the bottom edge.
     expect(firstLegAxis(verticalSpiral)).toBe('y');
-    expect(verticalStart.y).toBeGreaterThan(380);
-    expect(verticalEnd.y).toBeGreaterThan(380);
+    expect(verticalStart.y).toBeGreaterThan(3800);
+    expect(verticalEnd.y).toBeGreaterThan(3800);
 
     store.getState().updateZoneStartDirection(squareZone.id, 'horizontal');
     const horizontalSpiral = store.getState().zones[0].spiral!;
@@ -286,11 +284,137 @@ describe('useStore persistence', () => {
 
     // Horizontal start: first leg runs along X, both stubs on the left edge.
     expect(firstLegAxis(horizontalSpiral)).toBe('x');
-    expect(horizontalStart.x).toBeLessThan(20);
-    expect(horizontalEnd.x).toBeLessThan(20);
+    expect(horizontalStart.x).toBeLessThan(200);
+    expect(horizontalEnd.x).toBeLessThan(200);
 
     // The connection stays anchored at the same (bottom-left) corner.
-    expect(Math.abs(horizontalStart.x - verticalStart.x)).toBeLessThan(30);
-    expect(Math.abs(horizontalStart.y - verticalStart.y)).toBeLessThan(30);
+    expect(Math.abs(horizontalStart.x - verticalStart.x)).toBeLessThan(300);
+    expect(Math.abs(horizontalStart.y - verticalStart.y)).toBeLessThan(300);
+  });
+
+  it('calibrates the imported plan without touching the design', () => {
+    const store = createUfhStore();
+    const manifold = { position: { x: 5000, y: 1000 }, rotationDeg: 90 };
+
+    store.setState({
+      background: persistedImageBackground,
+      manifold,
+      zones: [persistedZone],
+      pxPerMm: DEFAULT_PX_PER_MM,
+    });
+    store.getState().recomputeZoneSpiral(persistedZone.id);
+    store.getState().startRouteZone(persistedZone.id);
+    store.getState().addRoutePoint({ x: 3000, y: 1900 });
+    store.getState().finishRouting({ x: 5000, y: 1000 });
+
+    const before = store.getState().zones[0];
+    expect(before.leaderWaypoints).not.toBeNull();
+
+    // The user clicks a span the plan draws as 2 000 mm and says it is really 2 500.
+    store.getState().startCalibration();
+    store.getState().addCalibrationPoint({ x: 0, y: 0 });
+    store.getState().addCalibrationPoint({ x: 2000, y: 0 });
+    store.getState().finishCalibration(2500);
+
+    const factor = 1.25;
+    const state = store.getState();
+
+    // The plan resizes about the first clicked point...
+    expect(state.background).toMatchObject({
+      x: 100 * factor,
+      y: 200 * factor,
+      mmPerPixel: 5 * factor,
+    });
+
+    // ...and nothing else does. Zones are authored in real millimetres already.
+    expect(state.zones[0].polygon.points).toEqual(persistedZone.polygon.points);
+    expect(state.zones[0].spacingMm).toBe(persistedZone.spacingMm);
+    expect(state.zones[0].spiralLengthMm).toBe(before.spiralLengthMm);
+    expect(state.zones[0].leaderWaypoints).toEqual(before.leaderWaypoints);
+    expect(state.zones[0].manifoldPortOffsetMm).toBe(before.manifoldPortOffsetMm);
+    expect(state.manifold).toEqual(manifold);
+    // The view is left alone too — the plan visibly changes size, which is the point.
+    expect(state.pxPerMm).toBe(DEFAULT_PX_PER_MM);
+    expect(state.calibration.active).toBe(false);
+  });
+
+  it('holds the first calibration point still while the plan resizes around it', () => {
+    const store = createUfhStore();
+    store.setState({ background: { ...persistedImageBackground, x: 1000, y: 0, mmPerPixel: 10 } });
+
+    // Anchored on (1000, 0) — the plan's own left edge — so that edge must not move.
+    store.getState().rescaleBackground(2, { x: 1000, y: 0 });
+
+    expect(store.getState().background).toMatchObject({ x: 1000, y: 0, mmPerPixel: 20 });
+  });
+
+  it('leaves the design alone when there is no plan to calibrate', () => {
+    const store = createUfhStore();
+    store.setState({ background: null, zones: [persistedZone] });
+
+    store.getState().rescaleBackground(2, { x: 0, y: 0 });
+
+    expect(store.getState().background).toBeNull();
+    expect(store.getState().zones[0].polygon.points).toEqual(persistedZone.polygon.points);
+  });
+
+  it('migrates a pixel-era project into millimetres on load', async () => {
+    // 50 px/m means one pixel was 20 mm.
+    window.localStorage.setItem(
+      UFH_STORE_STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          pixelsPerMeter: 50,
+          maxCircuitLengthM: 100,
+          defaultSpacingMm: 150,
+          background: {
+            kind: 'image',
+            src: 'data:image/png;base64,abc123',
+            naturalWidth: 640,
+            naturalHeight: 320,
+            fitX: 10,
+            fitY: 20,
+            fitScale: 0.5,
+          },
+          zones: [
+            {
+              id: 'legacy',
+              name: 'Legacy',
+              color: '#3498db',
+              spacingMm: 150,
+              paddingMm: 100,
+              polygon: {
+                points: [
+                  { x: 0, y: 0 },
+                  { x: 100, y: 0 },
+                  { x: 100, y: 100 },
+                  { x: 0, y: 100 },
+                ],
+              },
+              leaderWaypoints: [{ x: 120, y: 50 }],
+              manifoldPortOffsetPx: 4,
+            },
+          ],
+          manifold: { position: { x: 200, y: 50 } },
+        },
+        version: 0,
+      }),
+    );
+
+    const store = createUfhStore();
+    await store.persist.rehydrate();
+    const state = store.getState();
+
+    // Every stored coordinate comes back multiplied by the file's own mm-per-pixel.
+    expect(state.zones[0].polygon.points[2]).toEqual({ x: 2000, y: 2000 });
+    expect(state.zones[0].leaderWaypoints).toEqual([{ x: 2400, y: 1000 }]);
+    expect(state.zones[0].manifoldPortOffsetMm).toBe(80);
+    expect(state.manifold!.position).toEqual({ x: 4000, y: 1000 });
+    expect(state.background).toMatchObject({ x: 200, y: 400, mmPerPixel: 10 });
+
+    // ...and saving it again writes the current schema, with no pixel factor in sight.
+    const saved = partializeStoreState(state);
+    expect(saved.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(JSON.stringify(saved)).not.toContain('pixelsPerMeter');
   });
 });

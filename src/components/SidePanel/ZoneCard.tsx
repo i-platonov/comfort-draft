@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { SpiralStartDirection, Zone, ZoneConnectionCorner } from '../../types';
 import { useStore } from '../../state/store';
 import EditableSelect from './EditableSelect';
+import { mm2ToSquareMeters, mmToMeters } from '../../geometry/length';
 
 interface Props {
   zone: Zone;
@@ -36,7 +37,8 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(zone.name);
 
-  const totalLength = zone.spiralLengthM + zone.leaderLengthM;
+  // Lengths are stored in mm and quoted in metres, like every pipe schedule.
+  const totalLength = mmToMeters(zone.spiralLengthMm + zone.leaderLengthMm);
   const isOverLimit = totalLength > maxCircuitLengthM;
 
   const commitName = () => {
@@ -171,7 +173,11 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
 
       <div className={`zone-lengths ${isOverLimit ? 'over-limit' : ''}`}>
         <div className="length-row">
-          <span>{zone.areaM2.toFixed(2)} m² · spiral {zone.spiralLengthM.toFixed(1)}m · leader {zone.leaderLengthM.toFixed(1)}m</span>
+          <span>
+            {mm2ToSquareMeters(zone.areaMm2).toFixed(2)} m² · spiral{' '}
+            {mmToMeters(zone.spiralLengthMm).toFixed(1)}m · leader{' '}
+            {mmToMeters(zone.leaderLengthMm).toFixed(1)}m
+          </span>
         </div>
         <div className="length-row total">
           <span>Total:</span>

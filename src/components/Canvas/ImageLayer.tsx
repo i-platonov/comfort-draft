@@ -3,20 +3,22 @@ import { Image as KonvaImage, Layer } from 'react-konva';
 
 interface Props {
   src: string;
-  fitX: number;
-  fitY: number;
-  fitScale: number;
+  /** Top-left corner of the placed plan, in drawing millimetres. */
+  x: number;
+  y: number;
+  /** Millimetres per image pixel — set on import, corrected by calibration. */
+  mmPerPixel: number;
+  /** The bitmap's own dimensions, in image pixels. */
   naturalWidth: number;
   naturalHeight: number;
 }
 
 /**
- * Renders a raster image as the background floor-plan layer.
- * The image is already fitted to the viewport – fitX/fitY/fitScale are
- * computed once (on import) and stored in the background state so that
- * calibration coordinates stay consistent.
+ * Renders a raster image as the background floor-plan layer. The image is placed in the
+ * drawing's millimetres like everything else; the stage transform turns that into screen
+ * pixels, so the plan zooms with the design instead of alongside it.
  */
-function ImageLayer({ src, fitX, fitY, fitScale, naturalWidth, naturalHeight }: Props) {
+function ImageLayer({ src, x, y, mmPerPixel, naturalWidth, naturalHeight }: Props) {
   const [img, setImg] = useState<HTMLImageElement | null>(null);
 
   useEffect(() => {
@@ -34,10 +36,10 @@ function ImageLayer({ src, fitX, fitY, fitScale, naturalWidth, naturalHeight }: 
     <Layer listening={false}>
       <KonvaImage
         image={img}
-        x={fitX}
-        y={fitY}
-        width={naturalWidth * fitScale}
-        height={naturalHeight * fitScale}
+        x={x}
+        y={y}
+        width={naturalWidth * mmPerPixel}
+        height={naturalHeight * mmPerPixel}
         opacity={0.85}
       />
     </Layer>

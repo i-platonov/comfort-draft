@@ -122,29 +122,25 @@ export function dxfBoundingBox(
 }
 
 /**
- * Compute the transform to fit DXF entities into the viewport.
+ * Place DXF geometry into the drawing, with its top-left corner at the mm origin.
+ *
+ * `mmPerUnit` is the assumption a bare DXF forces on us: the file says nothing about what
+ * one drawing unit means. AutoCAD's own default is millimetres, so 1 is the right guess —
+ * calibrating against a known distance corrects it if the file used metres or inches.
+ *
+ * DXF's Y axis points up and the drawing's points down, hence the flip: `y` is negated and
+ * the offset is taken from `maxY`, so the plan lands below the origin rather than above it.
  */
-export function fitDxfToViewport(
+export function placeDxfInDrawing(
   entities: DxfEntity[],
-  viewportWidth: number,
-  viewportHeight: number,
-  padding = 40,
+  mmPerUnit = 1,
 ): { offsetX: number; offsetY: number; scale: number } {
   const bb = dxfBoundingBox(entities);
-  if (!bb) return { offsetX: 0, offsetY: 0, scale: 1 };
+  if (!bb) return { offsetX: 0, offsetY: 0, scale: mmPerUnit };
 
-  const drawW = bb.maxX - bb.minX;
-  const drawH = bb.maxY - bb.minY;
-  if (drawW <= 0 || drawH <= 0) return { offsetX: 0, offsetY: 0, scale: 1 };
-
-  const scaleX = (viewportWidth - 2 * padding) / drawW;
-  const scaleY = (viewportHeight - 2 * padding) / drawH;
-  const scale = Math.min(scaleX, scaleY);
-
-  const scaledW = drawW * scale;
-  const scaledH = drawH * scale;
-  const offsetX = (viewportWidth - scaledW) / 2 - bb.minX * scale;
-  const offsetY = (viewportHeight + scaledH) / 2 + bb.minY * scale;
-
-  return { offsetX, offsetY, scale };
+  return {
+    offsetX: -bb.minX * mmPerUnit,
+    offsetY: bb.maxY * mmPerUnit,
+    scale: mmPerUnit,
+  };
 }

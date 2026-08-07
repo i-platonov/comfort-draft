@@ -5,6 +5,7 @@ import {
   CalibrationState,
   LeaderRoutingState,
   Manifold,
+  MeasurementState,
   Point,
   SpiralStartDirection,
   ToolMode,
@@ -12,7 +13,7 @@ import {
   ZoneConnectionCorner,
 } from '../types';
 import { generateSerpentine, getSpiralStubs } from '../geometry/spiral';
-import { distancePx, pathLengthPx, pxToMeters } from '../geometry/length';
+import { distanceMm, pathLengthMm } from '../geometry/length';
 import { polygonArea } from '../geometry/offset';
 import {
   clampManifoldOffset,
@@ -21,23 +22,23 @@ import {
   projectPointOntoManifold,
 } from '../geometry/manifoldRouting';
 import { isAxisAlignedRect, resizeRectFromCorner } from '../geometry/rect';
+import { dxfBoundingBox } from '../geometry/dxfHelpers';
 import { ZONE_COLORS } from '../theme';
 import {
   assembleLeaderPath,
   getIncomingLegDirection,
   getStubExitDirection,
   isPointOnManifold,
-  maxDiagonalApproachPx,
   midpoint,
   reflowLeaderWaypoints,
   snapElbowPoint,
   snapFirstLegPoint,
 } from '../geometry/manualRouting';
 
-const MANIFOLD_CLICK_MARGIN_PX = 10;
-const MIN_LEADER_SEGMENT_PX = 15;
+const MANIFOLD_CLICK_MARGIN_MM = 100;
+const MIN_LEADER_SEGMENT_MM = 150;
 /** Below this, a zone resize is treated as not having moved the connection point — existing leader routing is kept. */
-const ZONE_RESIZE_ROUTING_TOLERANCE_PX = 20;
+const ZONE_RESIZE_ROUTING_TOLERANCE_MM = 200;
 
 const DEFAULT_ZONE_PADDING_MM = 100;
 const DEFAULT_ZONE_CONNECTION_CORNER: ZoneConnectionCorner = 'bottom-left';
@@ -56,8 +57,16 @@ const DEFAULT_ZONE_START_DIRECTION: SpiralStartDirection = getDefaultStartDirect
   DEFAULT_ZONE_CONNECTION_CORNER,
 );
 
+/**
+ * Screen pixels per millimetre at the default view. A 10 m wall is 10 000 mm, so at 0.1
+ * it spans 1000 px — a whole house fits a laptop screen. This is the Konva stage scale,
+ * i.e. the single place the drawing's millimetres become pixels.
+ */
+export const DEFAULT_PX_PER_MM = 0.1;
+
 interface StoreState {
-  pixelsPerMeter: number;
+  /** Screen pixels per millimetre: zoom and unit conversion in one number. */
+  pxPerMm: number;
   maxCircuitLengthM: number;
   defaultSpacingMm: number;
   /** Flow-water supply temperature at the manifold, °C. */
@@ -78,11 +87,18 @@ interface StoreState {
   /** In-progress manual leader-routing session, if any */
   routing: LeaderRoutingState | null;
   calibration: CalibrationState;
-  stageScale: number;
+  /** The tape measure's two ends, in mm; both null when nothing is being measured. */
+  measurement: MeasurementState;
+  /** Stage translation, in screen pixels. */
   stageX: number;
   stageY: number;
 
   setBackground: (bg: Background | null) => void;
+  /**
+   * Shift the floor plan by a world-space delta, leaving zones and the manifold where
+   * they are — for lining an imported plan up with work already drawn against it.
+   */
+  moveBackground: (deltaX: number, deltaY: number) => void;
   setToolMode: (mode: ToolMode) => void;
   setManifold: (pos: Point) => void;
   updateManifoldPosition: (pos: Point) => void;
@@ -140,18 +156,30 @@ interface StoreState {
    * it. The drawn waypoints stay put — only the derived approach re-aims.
    */
   slideZoneManifoldPort: (zoneId: string, pt: Point) => void;
-  setPixelsPerMeter: (ppm: number) => void;
+  /**
+   * Resize the imported floor plan by `factor`, holding `anchor` still — what calibration
+   * does once it learns the plan came in at the wrong size. Nothing else in the drawing
+   * moves: zones and the manifold are authored in real millimetres and are already right.
+   */
+  rescaleBackground: (factor: number, anchor: Point) => void;
   setMaxCircuitLength: (m: number) => void;
   setDefaultSpacing: (mm: number) => void;
   setSupplyTempC: (celsius: number) => void;
   setReturnTempC: (celsius: number) => void;
   setFlowLpmPer100m: (lpm: number) => void;
+  /**
+   * Place a tape-measure end. The first click starts a reading, the second completes it,
+   * and a third starts a fresh one — so repeated measurements need no reset in between.
+   */
+  addMeasurePoint: (pt: Point) => void;
+  clearMeasurement: () => void;
   startCalibration: () => void;
   addCalibrationPoint: (pt: Point) => void;
-  finishCalibration: (realDistanceM: number) => void;
+  finishCalibration: (realDistanceMm: number) => void;
   cancelCalibration: () => void;
-  setStageTransform: (scale: number, x: number, y: number) => void;
-  resetView: () => void;
+  setStageTransform: (pxPerMm: number, x: number, y: number) => void;
+  /** Frame the whole drawing in a viewport of the given screen size. */
+  fitViewToContent: (viewportWidth: number, viewportHeight: number) => void;
   recomputeZoneSpiral: (zoneId: string) => void;
 }
 
@@ -166,11 +194,12 @@ export type PersistedZone = Pick<
   | 'connectionCorner'
   | 'startDirection'
   | 'leaderWaypoints'
-  | 'manifoldPortOffsetPx'
+  | 'manifoldPortOffsetMm'
 >;
 
 export interface PersistedStoreState {
-  pixelsPerMeter: number;
+  /** Bumped when the on-disk shape changes; drives migration on load. */
+  schemaVersion: number;
   maxCircuitLengthM: number;
   defaultSpacingMm: number;
   supplyTempC: number;
@@ -187,7 +216,13 @@ let zoneCounter = 1;
 
 function createTransientState(): Pick<
   StoreState,
-  'selectedZoneId' | 'toolMode' | 'drawingPoints' | 'drawRectStart' | 'routing' | 'calibration'
+  | 'selectedZoneId'
+  | 'toolMode'
+  | 'drawingPoints'
+  | 'drawRectStart'
+  | 'routing'
+  | 'calibration'
+  | 'measurement'
 > {
   return {
     selectedZoneId: null,
@@ -196,21 +231,21 @@ function createTransientState(): Pick<
     drawRectStart: null,
     routing: null,
     calibration: { active: false, point1: null, point2: null },
+    measurement: { start: null, end: null },
   };
 }
 
 /**
  * Recompute spirals for freshly-hydrated zones, keeping their persisted manual
- * leader waypoints intact, then re-derive `leaderLengthM` (also derived data,
+ * leader waypoints intact, then re-derive `leaderLengthMm` (also derived data,
  * not persisted) from those waypoints against the current stub/port geometry.
  */
 function recomputeZones(
   zones: Zone[],
   manifold: Manifold | null,
-  pixelsPerMeter: number,
 ): Zone[] {
   const withSpirals = zones.map((zone) =>
-    recomputeSpiral(zone, manifold, pixelsPerMeter, { preserveLeaderRouting: true }),
+    recomputeSpiral(zone, manifold, { preserveLeaderRouting: true }),
   );
 
   if (!manifold) return withSpirals;
@@ -218,34 +253,100 @@ function recomputeZones(
   return withSpirals.map((zone) => {
     if (!zone.leaderWaypoints) return zone;
     const stubs = zone.spiral ? getSpiralStubs(zone.spiral) : null;
-    const pair = getZoneManifoldPorts(manifold, zone, pixelsPerMeter);
-    if (!stubs || !pair) return { ...zone, leaderLengthM: 0 };
+    const pair = getZoneManifoldPorts(manifold, zone);
+    if (!stubs || !pair) return { ...zone, leaderLengthMm: 0 };
 
     const fullPath = assembleLeaderPath(
       midpoint(stubs.start, stubs.end),
       zone.leaderWaypoints,
       midpoint(pair.supplyPort, pair.returnPort),
-      maxDiagonalApproachPx(pixelsPerMeter),
     );
     // One drawn path represents the supply+return pair, so it accounts for two pipe runs.
-    return { ...zone, leaderLengthM: pxToMeters(pathLengthPx(fullPath) * 2, pixelsPerMeter) };
+    return { ...zone, leaderLengthMm: pathLengthMm(fullPath) * 2 };
   });
+}
+
+/**
+ * Resize a placed floor plan about `anchor`: the anchor point keeps its place in the
+ * drawing and everything on the plan moves away from (or toward) it by `factor`.
+ */
+function scaleBackgroundAbout(background: Background, factor: number, anchor: Point): Background {
+  const about = (value: number, origin: number) => origin + (value - origin) * factor;
+
+  if (background.kind === 'image') {
+    return {
+      ...background,
+      x: about(background.x, anchor.x),
+      y: about(background.y, anchor.y),
+      mmPerPixel: background.mmPerPixel * factor,
+    };
+  }
+
+  // A DXF point lands at `unit * scale + offset` (y negated), so scaling the offset about
+  // the anchor and the scale by the factor moves the whole plan the same way.
+  return {
+    ...background,
+    transform: {
+      offsetX: about(background.transform.offsetX, anchor.x),
+      offsetY: about(background.transform.offsetY, anchor.y),
+      scale: background.transform.scale * factor,
+    },
+  };
+}
+
+/**
+ * Extent of everything drawn, in mm — zones, the manifold and the imported plan — for
+ * framing the view. Null when the drawing is empty and there's nothing to frame.
+ */
+function getDrawingBoundsMm(
+  state: Pick<StoreState, 'zones' | 'manifold' | 'background'>,
+): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  const points: Point[] = [];
+
+  for (const zone of state.zones) points.push(...zone.polygon.points);
+  if (state.manifold) points.push(state.manifold.position);
+
+  const { background } = state;
+  if (background?.kind === 'image') {
+    points.push({ x: background.x, y: background.y });
+    points.push({
+      x: background.x + background.naturalWidth * background.mmPerPixel,
+      y: background.y + background.naturalHeight * background.mmPerPixel,
+    });
+  } else if (background?.kind === 'dxf') {
+    const bounds = dxfBoundingBox(background.entities);
+    if (bounds) {
+      const { offsetX, offsetY, scale } = background.transform;
+      // DXF y grows upward and the drawing's grows down, so the box flips as it lands.
+      points.push({ x: bounds.minX * scale + offsetX, y: offsetY - bounds.maxY * scale });
+      points.push({ x: bounds.maxX * scale + offsetX, y: offsetY - bounds.minY * scale });
+    }
+  }
+
+  if (points.length === 0) return null;
+
+  return {
+    minX: Math.min(...points.map((point) => point.x)),
+    minY: Math.min(...points.map((point) => point.y)),
+    maxX: Math.max(...points.map((point) => point.x)),
+    maxY: Math.max(...points.map((point) => point.y)),
+  };
 }
 
 /** Clear a zone's manual leader routing (and chosen manifold outlet) — used whenever the manifold or spiral geometry moves. */
 function clearZoneLeaderRouting(zone: Zone): Zone {
   if (
     zone.leaderWaypoints === null &&
-    zone.manifoldPortOffsetPx === null &&
-    zone.leaderLengthM === 0
+    zone.manifoldPortOffsetMm === null &&
+    zone.leaderLengthMm === 0
   ) {
     return zone;
   }
   return {
     ...zone,
     leaderWaypoints: null,
-    manifoldPortOffsetPx: null,
-    leaderLengthM: 0,
+    manifoldPortOffsetMm: null,
+    leaderLengthMm: 0,
   };
 }
 
@@ -253,11 +354,10 @@ function clearZoneLeaderRouting(zone: Zone): Zone {
 function resolveLeaderAnchorTarget(
   zone: Zone,
   manifold: Manifold,
-  pixelsPerMeter: number,
 ): { anchor: Point; target: Point } | null {
   const stubs = zone.spiral ? getSpiralStubs(zone.spiral) : null;
   if (!stubs) return null;
-  const pair = getZoneManifoldPorts(manifold, zone, pixelsPerMeter);
+  const pair = getZoneManifoldPorts(manifold, zone);
   if (!pair) return null;
   return { anchor: midpoint(stubs.start, stubs.end), target: midpoint(pair.supplyPort, pair.returnPort) };
 }
@@ -273,26 +373,20 @@ function resolveLeaderAnchorTarget(
 function withLeaderWaypoints(
   zone: Zone,
   manifold: Manifold,
-  pixelsPerMeter: number,
   waypoints: Point[],
   reflow: boolean,
 ): Zone | null {
-  const anchorTarget = resolveLeaderAnchorTarget(zone, manifold, pixelsPerMeter);
+  const anchorTarget = resolveLeaderAnchorTarget(zone, manifold);
   if (!anchorTarget) return null;
 
   const repaired = reflow ? reflowLeaderWaypoints(anchorTarget.anchor, waypoints) : waypoints;
-  const fullPath = assembleLeaderPath(
-    anchorTarget.anchor,
-    repaired,
-    anchorTarget.target,
-    maxDiagonalApproachPx(pixelsPerMeter),
-  );
+  const fullPath = assembleLeaderPath(anchorTarget.anchor, repaired, anchorTarget.target);
 
   return {
     ...zone,
     leaderWaypoints: repaired,
     // One drawn path represents the supply+return pair, so it accounts for two pipe runs.
-    leaderLengthM: pxToMeters(pathLengthPx(fullPath) * 2, pixelsPerMeter),
+    leaderLengthMm: pathLengthMm(fullPath) * 2,
   };
 }
 
@@ -411,7 +505,7 @@ function toPersistedZone(zone: Zone): PersistedZone {
     connectionCorner: zone.connectionCorner,
     startDirection: zone.startDirection,
     leaderWaypoints: zone.leaderWaypoints,
-    manifoldPortOffsetPx: zone.manifoldPortOffsetPx,
+    manifoldPortOffsetMm: zone.manifoldPortOffsetMm,
   };
 }
 
@@ -426,11 +520,11 @@ function hydrateZone(zone: Partial<PersistedZone> & Pick<Zone, 'id' | 'name' | '
     startDirection: getZoneStartDirection(zone),
     spacingMm: zone.spacingMm,
     spiral: null,
-    spiralLengthM: 0,
-    leaderLengthM: 0,
-    areaM2: 0,
+    spiralLengthMm: 0,
+    leaderLengthMm: 0,
+    areaMm2: 0,
     leaderWaypoints: Array.isArray(zone.leaderWaypoints) ? zone.leaderWaypoints : null,
-    manifoldPortOffsetPx: Number.isFinite(zone.manifoldPortOffsetPx) ? (zone.manifoldPortOffsetPx as number) : null,
+    manifoldPortOffsetMm: Number.isFinite(zone.manifoldPortOffsetMm) ? (zone.manifoldPortOffsetMm as number) : null,
   };
 }
 
@@ -465,30 +559,27 @@ function normalizeManifold(manifold: Manifold | null): Manifold | null {
 function recomputeSpiral(
   zone: Zone,
   manifold: Manifold | null,
-  pixelsPerMeter: number,
   options: { preserveLeaderRouting?: boolean } = {},
 ): Zone {
-  const spacingPx = (zone.spacingMm / 1000) * pixelsPerMeter;
-  const paddingPx = (zone.paddingMm / 1000) * pixelsPerMeter;
+  // Spacing and padding are authored in mm and the drawing is in mm, so they go straight
+  // in — no conversion, which is the point of keeping one unit throughout.
   const { hint, mirror } = getZoneConnection(zone, manifold);
-  const spiral = generateSerpentine(zone.polygon, spacingPx, hint, paddingPx, mirror);
-  const spiralLengthPx = pathLengthPx(spiral);
-  const spiralLengthM = pxToMeters(spiralLengthPx, pixelsPerMeter);
-  const areaPx = polygonArea(zone.polygon.points);
-  const areaM2 = pixelsPerMeter > 0 ? areaPx / (pixelsPerMeter * pixelsPerMeter) : 0;
+  const spiral = generateSerpentine(zone.polygon, zone.spacingMm, hint, zone.paddingMm, mirror);
+  const spiralLengthMm = pathLengthMm(spiral);
+  const areaMm2 = polygonArea(zone.polygon.points);
 
   if (options.preserveLeaderRouting) {
-    return { ...zone, spiral, spiralLengthM, areaM2 };
+    return { ...zone, spiral, spiralLengthMm, areaMm2 };
   }
 
   return {
     ...zone,
     spiral,
-    spiralLengthM,
-    areaM2,
+    spiralLengthMm,
+    areaMm2,
     leaderWaypoints: null,
-    manifoldPortOffsetPx: null,
-    leaderLengthM: 0,
+    manifoldPortOffsetMm: null,
+    leaderLengthMm: 0,
   };
 }
 
@@ -505,9 +596,106 @@ function rectPolygon(a: Point, b: Point) {
 }
 
 
+/**
+ * Version 1 stored every coordinate in screen pixels, with a `pixelsPerMeter` factor
+ * recording what those pixels meant. Version 2 stores millimetres outright.
+ */
+export const CURRENT_SCHEMA_VERSION = 2;
+
+/** The version-1 fields, present only in files saved before the move to millimetres. */
+interface LegacyPixelState {
+  pixelsPerMeter?: number;
+  zones?: Array<Record<string, unknown>>;
+  background?: Record<string, unknown> | null;
+}
+
+function scalePoint(point: Point, factor: number): Point {
+  return { x: point.x * factor, y: point.y * factor };
+}
+
+/**
+ * Bring a pre-millimetre project forward. Everything positional was in pixels, so one
+ * factor — millimetres per pixel, read off the file's own calibration — converts the lot.
+ * A project already at the current version passes through untouched.
+ */
+function migrateToMillimetres(
+  persisted: Partial<PersistedStoreState> & LegacyPixelState,
+): Partial<PersistedStoreState> {
+  const { schemaVersion, pixelsPerMeter, ...rest } = persisted as Partial<PersistedStoreState> &
+    LegacyPixelState & { schemaVersion?: number };
+
+  if (schemaVersion === CURRENT_SCHEMA_VERSION) return rest as Partial<PersistedStoreState>;
+  if (!Number.isFinite(pixelsPerMeter) || !pixelsPerMeter || pixelsPerMeter <= 0) {
+    // No calibration to convert with: the coordinates are unrecoverable as real lengths,
+    // so keep the design and let the user recalibrate rather than silently mis-scaling it.
+    return rest as Partial<PersistedStoreState>;
+  }
+
+  const mmPerPx = 1000 / pixelsPerMeter;
+  const legacyZones = Array.isArray(persisted.zones) ? persisted.zones : [];
+  const legacyBackground = persisted.background as Record<string, unknown> | null | undefined;
+
+  return {
+    ...(rest as Partial<PersistedStoreState>),
+    zones: legacyZones.map((zone) => {
+      const polygon = zone.polygon as { points?: Point[] } | undefined;
+      const waypoints = zone.leaderWaypoints as Point[] | null | undefined;
+      const offsetPx = (zone as Record<string, unknown>).manifoldPortOffsetPx as
+        | number
+        | null
+        | undefined;
+      return {
+        ...zone,
+        polygon: { points: (polygon?.points ?? []).map((point) => scalePoint(point, mmPerPx)) },
+        leaderWaypoints: Array.isArray(waypoints)
+          ? waypoints.map((point) => scalePoint(point, mmPerPx))
+          : null,
+        manifoldPortOffsetMm: Number.isFinite(offsetPx) ? (offsetPx as number) * mmPerPx : null,
+      };
+    }) as PersistedStoreState['zones'],
+    manifold: persisted.manifold
+      ? { ...persisted.manifold, position: scalePoint(persisted.manifold.position, mmPerPx) }
+      : (persisted.manifold ?? null),
+    background: migrateBackgroundToMillimetres(legacyBackground, mmPerPx),
+  };
+}
+
+function migrateBackgroundToMillimetres(
+  background: Record<string, unknown> | null | undefined,
+  mmPerPx: number,
+): Background | null {
+  if (!background) return null;
+
+  if (background.kind === 'image') {
+    return {
+      kind: 'image',
+      src: background.src as string,
+      naturalWidth: background.naturalWidth as number,
+      naturalHeight: background.naturalHeight as number,
+      x: (background.fitX as number) * mmPerPx,
+      y: (background.fitY as number) * mmPerPx,
+      // Was image-pixels-to-screen-pixels; screen pixels are now millimetres.
+      mmPerPixel: (background.fitScale as number) * mmPerPx,
+    };
+  }
+
+  const transform = background.transform as { offsetX: number; offsetY: number; scale: number };
+  return {
+    kind: 'dxf',
+    entities: background.entities as Background extends { kind: 'dxf'; entities: infer E }
+      ? E
+      : never,
+    transform: {
+      offsetX: transform.offsetX * mmPerPx,
+      offsetY: transform.offsetY * mmPerPx,
+      scale: transform.scale * mmPerPx,
+    },
+  };
+}
+
 export function partializeStoreState(state: StoreState): PersistedStoreState {
   return {
-    pixelsPerMeter: state.pixelsPerMeter,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     maxCircuitLengthM: state.maxCircuitLengthM,
     defaultSpacingMm: state.defaultSpacingMm,
     supplyTempC: state.supplyTempC,
@@ -523,10 +711,11 @@ export function mergePersistedStoreState(
   persistedState: unknown,
   currentState: StoreState,
 ): StoreState {
-  const persisted =
+  const persisted = migrateToMillimetres(
     persistedState && typeof persistedState === 'object'
-      ? (persistedState as Partial<PersistedStoreState>)
-      : {};
+      ? (persistedState as Partial<PersistedStoreState> & LegacyPixelState)
+      : {},
+  );
   const hydratedZones = Array.isArray(persisted.zones)
     ? persisted.zones.map((zone) =>
         hydrateZone(zone as Partial<PersistedZone> & Pick<Zone, 'id' | 'name' | 'color' | 'polygon' | 'spacingMm'>),
@@ -538,7 +727,7 @@ export function mergePersistedStoreState(
     manifold: normalizeManifold(persisted.manifold ?? currentState.manifold),
     zones: hydratedZones,
   };
-  const zones = recomputeZones(merged.zones, merged.manifold, merged.pixelsPerMeter);
+  const zones = recomputeZones(merged.zones, merged.manifold);
 
   zoneCounter = getNextZoneCounter(zones);
 
@@ -550,7 +739,7 @@ export function mergePersistedStoreState(
 }
 
 const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
-  pixelsPerMeter: 100,
+  pxPerMm: DEFAULT_PX_PER_MM,
   maxCircuitLengthM: 100,
   defaultSpacingMm: 150,
   supplyTempC: 40,
@@ -559,21 +748,40 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   background: null,
   zones: [],
   manifold: null,
-  stageScale: 1,
   stageX: 0,
   stageY: 0,
   ...createTransientState(),
 
   setBackground: (bg) => set({ background: bg }),
 
+  moveBackground: (deltaX, deltaY) => {
+    const { background } = get();
+    if (!background) return;
+    if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) return;
+
+    set({
+      background:
+        background.kind === 'image'
+          ? { ...background, x: background.x + deltaX, y: background.y + deltaY }
+          : {
+              ...background,
+              transform: {
+                ...background.transform,
+                offsetX: background.transform.offsetX + deltaX,
+                offsetY: background.transform.offsetY + deltaY,
+              },
+            },
+    });
+  },
+
   setToolMode: (mode) => set({ toolMode: mode, drawingPoints: [], drawRectStart: null, routing: null }),
 
   setManifold: (pos) => {
     const previousRotation = get().manifold?.rotationDeg ?? 0;
     set({ manifold: { position: pos, rotationDeg: previousRotation }, toolMode: 'select', routing: null });
-    const { zones, pixelsPerMeter } = get();
+    const { zones } = get();
     const updated = zones.map((zone) =>
-      recomputeSpiral(zone, { position: pos, rotationDeg: previousRotation }, pixelsPerMeter),
+      recomputeSpiral(zone, { position: pos, rotationDeg: previousRotation }),
     );
     set({ zones: updated });
   },
@@ -581,9 +789,9 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   updateManifoldPosition: (pos) => {
     const rotationDeg = get().manifold?.rotationDeg ?? 0;
     set({ manifold: { position: pos, rotationDeg }, routing: null });
-    const { zones, pixelsPerMeter } = get();
+    const { zones } = get();
     const updated = zones.map((zone) =>
-      recomputeSpiral(zone, { position: pos, rotationDeg }, pixelsPerMeter),
+      recomputeSpiral(zone, { position: pos, rotationDeg }),
     );
     set({ zones: updated });
   },
@@ -601,7 +809,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   addDrawingPoint: (pt) => set((state) => ({ drawingPoints: [...state.drawingPoints, pt] })),
 
   closeZone: () => {
-    const { drawingPoints, zones, manifold, pixelsPerMeter, defaultSpacingMm } = get();
+    const { drawingPoints, zones, manifold, defaultSpacingMm } = get();
     if (drawingPoints.length < 3) {
       set({ drawingPoints: [] });
       return;
@@ -619,14 +827,14 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
       connectionCorner: DEFAULT_ZONE_CONNECTION_CORNER,
       startDirection: DEFAULT_ZONE_START_DIRECTION,
       spiral: null,
-      spiralLengthM: 0,
-      leaderLengthM: 0,
-      areaM2: 0,
+      spiralLengthMm: 0,
+      leaderLengthMm: 0,
+      areaMm2: 0,
       leaderWaypoints: null,
-      manifoldPortOffsetPx: null,
+      manifoldPortOffsetMm: null,
     };
 
-    const computed = recomputeSpiral(newZone, manifold, pixelsPerMeter);
+    const computed = recomputeSpiral(newZone, manifold);
     set({
       zones: [...zones, computed],
       drawingPoints: [],
@@ -640,7 +848,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   startDrawRect: (pt) => set({ drawRectStart: pt }),
 
   finishDrawRect: (pt) => {
-    const { drawRectStart, zones, manifold, pixelsPerMeter, defaultSpacingMm } = get();
+    const { drawRectStart, zones, manifold, defaultSpacingMm } = get();
     if (!drawRectStart) return;
 
     // Need at least a minimal area (avoid degenerate rects)
@@ -661,14 +869,14 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
       connectionCorner: DEFAULT_ZONE_CONNECTION_CORNER,
       startDirection: DEFAULT_ZONE_START_DIRECTION,
       spiral: null,
-      spiralLengthM: 0,
-      leaderLengthM: 0,
-      areaM2: 0,
+      spiralLengthMm: 0,
+      leaderLengthMm: 0,
+      areaMm2: 0,
       leaderWaypoints: null,
-      manifoldPortOffsetPx: null,
+      manifoldPortOffsetMm: null,
     };
 
-    const computed = recomputeSpiral(newZone, manifold, pixelsPerMeter);
+    const computed = recomputeSpiral(newZone, manifold);
     set({
       zones: [...zones, computed],
       drawRectStart: null,
@@ -688,19 +896,19 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   selectZone: (id) => set({ selectedZoneId: id }),
 
   updateZoneSpacing: (id, spacingMm) => {
-    const { zones, manifold, pixelsPerMeter } = get();
+    const { zones, manifold } = get();
     const updated = zones.map((zone) =>
-      zone.id === id ? recomputeSpiral({ ...zone, spacingMm }, manifold, pixelsPerMeter) : zone,
+      zone.id === id ? recomputeSpiral({ ...zone, spacingMm }, manifold) : zone,
     );
     set({ zones: updated });
   },
 
   updateZonePadding: (id, paddingMm) => {
-    const { zones, manifold, pixelsPerMeter } = get();
+    const { zones, manifold } = get();
     const normalizedPaddingMm = Math.max(0, paddingMm);
     const updated = zones.map((zone) =>
       zone.id === id
-        ? recomputeSpiral({ ...zone, paddingMm: normalizedPaddingMm }, manifold, pixelsPerMeter)
+        ? recomputeSpiral({ ...zone, paddingMm: normalizedPaddingMm }, manifold)
         : zone,
     );
     set({ zones: updated });
@@ -713,7 +921,6 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
         return recomputeSpiral(
           { ...zone, connectionCorner: corner },
           state.manifold,
-          state.pixelsPerMeter,
         );
       });
       return { zones: updated };
@@ -726,7 +933,6 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
         return recomputeSpiral(
           { ...zone, startDirection: direction },
           state.manifold,
-          state.pixelsPerMeter,
         );
       });
       return { zones: updated };
@@ -738,7 +944,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     })),
 
   updateZoneVertex: (zoneId, vertexIdx, pt) => {
-    const { zones, manifold, pixelsPerMeter } = get();
+    const { zones, manifold } = get();
     const updated = zones.map((zone) => {
       if (zone.id !== zoneId) return zone;
       const originalPoints = zone.polygon.points;
@@ -751,28 +957,28 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
       }
 
       const previousStubs = zone.spiral ? getSpiralStubs(zone.spiral) : null;
-      const recomputed = recomputeSpiral({ ...zone, polygon: { points } }, manifold, pixelsPerMeter, {
+      const recomputed = recomputeSpiral({ ...zone, polygon: { points } }, manifold, {
         preserveLeaderRouting: true,
       });
 
       if (!zone.leaderWaypoints || !previousStubs || !recomputed.spiral || !manifold) {
         // Nothing routed yet, or no spiral/manifold to compare against — nothing to preserve.
-        return { ...recomputed, leaderWaypoints: null, manifoldPortOffsetPx: null, leaderLengthM: 0 };
+        return { ...recomputed, leaderWaypoints: null, manifoldPortOffsetMm: null, leaderLengthMm: 0 };
       }
 
       const newStubs = getSpiralStubs(recomputed.spiral);
-      const anchorShiftPx = newStubs
-        ? distancePx(midpoint(previousStubs.start, previousStubs.end), midpoint(newStubs.start, newStubs.end))
+      const anchorShiftMm = newStubs
+        ? distanceMm(midpoint(previousStubs.start, previousStubs.end), midpoint(newStubs.start, newStubs.end))
         : Infinity;
 
-      if (anchorShiftPx > ZONE_RESIZE_ROUTING_TOLERANCE_PX) {
+      if (anchorShiftMm > ZONE_RESIZE_ROUTING_TOLERANCE_MM) {
         // The connection point moved enough that the old routing no longer makes sense.
-        return { ...recomputed, leaderWaypoints: null, manifoldPortOffsetPx: null, leaderLengthM: 0 };
+        return { ...recomputed, leaderWaypoints: null, manifoldPortOffsetMm: null, leaderLengthMm: 0 };
       }
 
       // Barely moved — keep the routing, just repair the first segment against the new anchor.
       return (
-        withLeaderWaypoints(recomputed, manifold, pixelsPerMeter, zone.leaderWaypoints, true) ?? recomputed
+        withLeaderWaypoints(recomputed, manifold, zone.leaderWaypoints, true) ?? recomputed
       );
     });
     set({ zones: updated });
@@ -793,13 +999,13 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   },
 
   addRoutePoint: (rawPt) => {
-    const { routing, zones, manifold, pixelsPerMeter } = get();
+    const { routing, zones, manifold } = get();
     if (!routing || !manifold) return;
     const zone = zones.find((candidate) => candidate.id === routing.zoneId);
     if (!zone || !zone.spiral) return;
 
-    const layout = getManifoldLayout(manifold, zones, pixelsPerMeter);
-    if (isPointOnManifold(rawPt, manifold, layout, MANIFOLD_CLICK_MARGIN_PX)) {
+    const layout = getManifoldLayout(manifold, zones);
+    if (isPointOnManifold(rawPt, manifold, layout, MANIFOLD_CLICK_MARGIN_MM)) {
       get().finishRouting(rawPt);
       return;
     }
@@ -811,7 +1017,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     const exitDir = getStubExitDirection(zone.spiral, 'start');
     const snapped =
       routing.points.length === 0
-        ? snapFirstLegPoint(anchor, exitDir, rawPt, MIN_LEADER_SEGMENT_PX)
+        ? snapFirstLegPoint(anchor, exitDir, rawPt, MIN_LEADER_SEGMENT_MM)
         : snapElbowPoint(
             routing.points[routing.points.length - 1],
             rawPt,
@@ -822,21 +1028,20 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   },
 
   finishRouting: (clickPos) => {
-    const { routing, zones, manifold, pixelsPerMeter } = get();
+    const { routing, zones, manifold } = get();
     if (!routing || !manifold) return;
     const zone = zones.find((candidate) => candidate.id === routing.zoneId);
     if (!zone || !zone.spiral) return;
 
     // The user picks the outlet by clicking it directly; it can be slid afterward.
-    const rawOffsetPx = projectPointOntoManifold(manifold, clickPos);
-    const manifoldPortOffsetPx = clampManifoldOffset(manifold, zones, pixelsPerMeter, rawOffsetPx);
+    const rawOffsetMm = projectPointOntoManifold(manifold, clickPos);
+    const manifoldPortOffsetMm = clampManifoldOffset(manifold, zones, rawOffsetMm);
 
     // Only the drawn elbows are stored — the run from the last elbow into the manifold is
     // derived, so it can cut diagonally or grow a bend as the geometry changes.
     const updatedZone = withLeaderWaypoints(
-      { ...zone, manifoldPortOffsetPx },
+      { ...zone, manifoldPortOffsetMm },
       manifold,
-      pixelsPerMeter,
       routing.points,
       false,
     );
@@ -849,7 +1054,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   cancelRouting: () => set({ routing: null }),
 
   updateLeaderWaypoint: (zoneId, waypointIndex, pt, reflow) => {
-    const { zones, manifold, pixelsPerMeter } = get();
+    const { zones, manifold } = get();
     if (!manifold) return;
     const zone = zones.find((candidate) => candidate.id === zoneId);
     if (!zone || !zone.leaderWaypoints) return;
@@ -858,13 +1063,13 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     // Only restructure the array (insert/drop bend points) on drag-end. Doing it on every
     // live drag-move would change the array's length mid-gesture, invalidating the dragged
     // circle's waypointIndex (captured when the drag started) for subsequent move events.
-    const updatedZone = withLeaderWaypoints(zone, manifold, pixelsPerMeter, updatedWaypoints, reflow);
+    const updatedZone = withLeaderWaypoints(zone, manifold, updatedWaypoints, reflow);
     if (!updatedZone) return;
     set({ zones: zones.map((candidate) => (candidate.id === zoneId ? updatedZone : candidate)) });
   },
 
   updateLeaderSegment: (zoneId, waypointIndexA, waypointIndexB, axis, value, reflow) => {
-    const { zones, manifold, pixelsPerMeter } = get();
+    const { zones, manifold } = get();
     if (!manifold) return;
     const zone = zones.find((candidate) => candidate.id === zoneId);
     if (!zone || !zone.leaderWaypoints) return;
@@ -875,28 +1080,27 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     });
     // Same drag-move-vs-drag-end split as updateLeaderWaypoint: keep the array shape stable
     // (both waypointIndexA/B still valid) while dragging, only restructuring at the end.
-    const updatedZone = withLeaderWaypoints(zone, manifold, pixelsPerMeter, updatedWaypoints, reflow);
+    const updatedZone = withLeaderWaypoints(zone, manifold, updatedWaypoints, reflow);
     if (!updatedZone) return;
     set({ zones: zones.map((candidate) => (candidate.id === zoneId ? updatedZone : candidate)) });
   },
 
   updateLeaderManifoldSegment: (zoneId, waypointIndex, axis, value, reflow) => {
-    const { zones, manifold, pixelsPerMeter } = get();
+    const { zones, manifold } = get();
     if (!manifold) return;
     const zone = zones.find((candidate) => candidate.id === zoneId);
     if (!zone || !zone.leaderWaypoints || zone.leaderWaypoints.length === 0) return;
 
-    const pair = getZoneManifoldPorts(manifold, zone, pixelsPerMeter);
+    const pair = getZoneManifoldPorts(manifold, zone);
     if (!pair) return;
     const currentTarget = midpoint(pair.supplyPort, pair.returnPort);
     // Slide the manifold connection to wherever the segment's far end lands, by projecting
     // that proposed point onto the manifold's tangent — robust to any manifold rotation,
     // not just axis-aligned ones.
     const proposedTarget = axis === 'x' ? { x: value, y: currentTarget.y } : { x: currentTarget.x, y: value };
-    const clampedOffsetPx = clampManifoldOffset(
+    const clampedOffsetMm = clampManifoldOffset(
       manifold,
       zones,
-      pixelsPerMeter,
       projectPointOntoManifold(manifold, proposedTarget),
     );
 
@@ -908,9 +1112,8 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     // Same drag-move-vs-drag-end split as updateLeaderWaypoint: the drawn waypoints are
     // only re-bent once, on release, not on every live-drag tick.
     const updatedZone = withLeaderWaypoints(
-      { ...zone, manifoldPortOffsetPx: clampedOffsetPx },
+      { ...zone, manifoldPortOffsetMm: clampedOffsetMm },
       manifold,
-      pixelsPerMeter,
       updatedWaypoints,
       reflow,
     );
@@ -919,15 +1122,14 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   },
 
   slideZoneManifoldPort: (zoneId, pt) => {
-    const { zones, manifold, pixelsPerMeter } = get();
+    const { zones, manifold } = get();
     if (!manifold) return;
     const zone = zones.find((candidate) => candidate.id === zoneId);
     if (!zone || !zone.leaderWaypoints) return;
 
-    const clampedOffsetPx = clampManifoldOffset(
+    const clampedOffsetMm = clampManifoldOffset(
       manifold,
       zones,
-      pixelsPerMeter,
       projectPointOntoManifold(manifold, pt),
     );
 
@@ -935,9 +1137,8 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     // it just re-aims at the new port — cutting across diagonally, or growing a bend once
     // that diagonal would run past its limit.
     const updatedZone = withLeaderWaypoints(
-      { ...zone, manifoldPortOffsetPx: clampedOffsetPx },
+      { ...zone, manifoldPortOffsetMm: clampedOffsetMm },
       manifold,
-      pixelsPerMeter,
       zone.leaderWaypoints,
       false,
     );
@@ -945,11 +1146,22 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     set({ zones: zones.map((candidate) => (candidate.id === zoneId ? updatedZone : candidate)) });
   },
 
-  setPixelsPerMeter: (ppm) => {
-    set({ pixelsPerMeter: ppm });
-    const { zones, manifold } = get();
-    const updated = zones.map((zone) => recomputeSpiral(zone, manifold, ppm));
-    set({ zones: updated });
+  rescaleBackground: (factor, anchor) => {
+    if (!Number.isFinite(factor) || factor <= 0 || factor === 1) return;
+    const { background } = get();
+    if (!background) return;
+
+    /*
+     * Only the plan resizes. Zones, the manifold and every routed leader are authored in
+     * real millimetres — a room drawn 4 000 mm wide is 4 000 mm wide — so they are already
+     * correct and must not be touched. What calibration discovers is that the *imported
+     * plan* came in at the wrong size, and that is the one thing it corrects.
+     *
+     * The scaling is anchored on the first point clicked, so the feature the user
+     * measured from stays under the cursor and the plan grows or shrinks away from it,
+     * rather than sliding off as it would if it scaled about the drawing origin.
+     */
+    set({ background: scaleBackgroundAbout(background, factor, anchor) });
   },
 
   setMaxCircuitLength: (m) => set({ maxCircuitLengthM: m }),
@@ -961,6 +1173,16 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   setReturnTempC: (celsius) => set({ returnTempC: celsius }),
 
   setFlowLpmPer100m: (lpm) => set({ flowLpmPer100m: lpm }),
+
+  addMeasurePoint: (pt) => {
+    const { measurement } = get();
+    // A completed reading is replaced rather than extended, so measuring twice in a row
+    // is just click-click, click-click.
+    const startFresh = !measurement.start || measurement.end;
+    set({ measurement: startFresh ? { start: pt, end: null } : { ...measurement, end: pt } });
+  },
+
+  clearMeasurement: () => set({ measurement: { start: null, end: null } }),
 
   startCalibration: () => set({ calibration: { active: true, point1: null, point2: null } }),
 
@@ -976,15 +1198,15 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     }
   },
 
-  finishCalibration: (realDistanceM) => {
+  finishCalibration: (realDistanceMm) => {
     const { calibration } = get();
     if (!calibration.point1 || !calibration.point2) return;
 
-    const dx = calibration.point2.x - calibration.point1.x;
-    const dy = calibration.point2.y - calibration.point1.y;
-    const pixelDist = Math.sqrt(dx * dx + dy * dy);
-    if (pixelDist > 0 && realDistanceM > 0) {
-      get().setPixelsPerMeter(pixelDist / realDistanceM);
+    // The span the user just clicked, as the plan currently claims it to be. The ratio
+    // against what they say it really is, is how wrong the plan's own scale is.
+    const measuredMm = distanceMm(calibration.point1, calibration.point2);
+    if (measuredMm > 0 && realDistanceMm > 0) {
+      get().rescaleBackground(realDistanceMm / measuredMm, calibration.point1);
     }
 
     set({ calibration: { active: false, point1: null, point2: null } });
@@ -992,14 +1214,36 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
 
   cancelCalibration: () => set({ calibration: { active: false, point1: null, point2: null } }),
 
-  setStageTransform: (scale, x, y) => set({ stageScale: scale, stageX: x, stageY: y }),
+  setStageTransform: (pxPerMm, x, y) => set({ pxPerMm, stageX: x, stageY: y }),
 
-  resetView: () => set({ stageScale: 1, stageX: 0, stageY: 0 }),
+  fitViewToContent: (viewportWidth, viewportHeight) => {
+    const bounds = getDrawingBoundsMm(get());
+    if (!bounds || viewportWidth <= 0 || viewportHeight <= 0) {
+      set({ pxPerMm: DEFAULT_PX_PER_MM, stageX: 0, stageY: 0 });
+      return;
+    }
+
+    const widthMm = Math.max(bounds.maxX - bounds.minX, 1);
+    const heightMm = Math.max(bounds.maxY - bounds.minY, 1);
+    const marginPx = 40;
+    const pxPerMm = Math.min(
+      (viewportWidth - marginPx * 2) / widthMm,
+      (viewportHeight - marginPx * 2) / heightMm,
+    );
+
+    // Centre the content: the stage offset is in screen pixels, so the drawing's mm
+    // centre is scaled before being subtracted from the viewport's centre.
+    set({
+      pxPerMm,
+      stageX: viewportWidth / 2 - ((bounds.minX + bounds.maxX) / 2) * pxPerMm,
+      stageY: viewportHeight / 2 - ((bounds.minY + bounds.maxY) / 2) * pxPerMm,
+    });
+  },
 
   recomputeZoneSpiral: (zoneId) => {
-    const { zones, manifold, pixelsPerMeter } = get();
+    const { zones, manifold } = get();
     const updated = zones.map((zone) =>
-      zone.id === zoneId ? recomputeSpiral(zone, manifold, pixelsPerMeter) : zone,
+      zone.id === zoneId ? recomputeSpiral(zone, manifold) : zone,
     );
     set({ zones: updated });
   },

@@ -5,6 +5,19 @@ type ManifoldSide = 'top' | 'right' | 'bottom' | 'left';
 const EPSILON = 1e-6;
 
 /**
+ * How far a hand-drawn corner may sit off-square before the edge is taken as a genuine
+ * diagonal rather than a wobble — millimetres, like everything else here.
+ *
+ * Sized from how precisely a corner can be clicked, not from pipe spacing: a click is
+ * placed to about a screen pixel, which is roughly 10 mm of drawing with a whole house on
+ * screen, and an edge collects that error at both ends. Anything tighter rejects ordinary
+ * hand-drawn polygons outright — `snapManuallyDrawnRectilinearPolygon` returns null and
+ * the zone renders no spiral at all. Real diagonal walls run far longer than this and are
+ * still left alone.
+ */
+const POLYGON_SNAP_TOLERANCE_MM = 50;
+
+/**
  * Generate a circular arc as a series of points.
  * Angles use screen coordinates, where Y increases downward.
  */
@@ -1587,7 +1600,7 @@ function getClosestManifoldSide(
  * - the short stub connecting the outermost ring to the manifold edge is
  *   not clamped, since it's assumed to sit on the polygon boundary already;
  * - the semicircular center turn is not clamped against the polygon;
- * - `paddingPx` insets the bounding rectangle but does not inset the
+ * - `paddingMm` insets the bounding rectangle but does not inset the
  *   polygon's own (possibly concave) edges;
  * - where a single scanline crosses the polygon in more than one place
  *   (an hourglass-shaped room, for instance), only the interval closest to
@@ -1601,30 +1614,22 @@ function getClosestManifoldSide(
  */
 export function generateSerpentine(
     polygon: Polygon,
-    spacingPx: number,
+    spacingMm: number,
     connectionHint?: Point,
-    paddingPx = 0,
+    paddingMm = 0,
     mirror = false,
 ): PipePath {
     if (
         polygon.points.length < 3 ||
-        !Number.isFinite(spacingPx) ||
-        spacingPx <= 0 ||
-        !Number.isFinite(paddingPx) ||
-        paddingPx < 0
+        !Number.isFinite(spacingMm) ||
+        spacingMm <= 0 ||
+        !Number.isFinite(paddingMm) ||
+        paddingMm < 0
     ) {
         return [];
     }
 
-    /*
-     * Snap only small manual-drawing errors. A tolerance tied to spacing keeps
-     * this scale-independent while remaining too small to convert an intended
-     * diagonal wall into an orthogonal one.
-     */
-    const snapTolerance = Math.max(
-        0.5,
-        Math.min(3, spacingPx * 0.08),
-    );
+    const snapTolerance = POLYGON_SNAP_TOLERANCE_MM;
 
     const snappedPoints =
         snapManuallyDrawnRectilinearPolygon(
@@ -1674,10 +1679,10 @@ export function generateSerpentine(
      * collapse when padding is too large.
      */
     const paddedPoints =
-        paddingPx > EPSILON
+        paddingMm > EPSILON
             ? offsetRectilinearPolygon(
                 cleanedPoints,
-                paddingPx,
+                paddingMm,
             )
             : cleanedPoints;
 
@@ -1701,8 +1706,8 @@ export function generateSerpentine(
     const zoneHeight = yMax - yMin;
 
     if (
-        zoneWidth < spacingPx * 3 ||
-        zoneHeight < spacingPx * 3
+        zoneWidth < spacingMm * 3 ||
+        zoneHeight < spacingMm * 3
     ) {
         return [];
     }
@@ -1745,7 +1750,7 @@ export function generateSerpentine(
         generateCanonicalSpiral(
             canonicalWidth,
             canonicalHeight,
-            spacingPx,
+            spacingMm,
             canonicalPolygon,
         );
 

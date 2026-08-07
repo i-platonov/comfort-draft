@@ -1,5 +1,16 @@
+/**
+ * A point in the drawing, in **millimetres**.
+ *
+ * Millimetres are this app's one internal unit: every stored coordinate, length and
+ * offset is mm, because that's the unit pipework and every other building measurement
+ * comes in. Pixels exist only at the edges — the Konva stage scale (`pxPerMm`) converts
+ * mm to screen pixels at draw time, and image/DXF imports convert their own units to mm
+ * once, on load. Nothing in between should know what a pixel is.
+ */
 export interface Point {
+  /** Millimetres, +x to the right. */
   x: number;
+  /** Millimetres, +y downward (screen convention, so no flip at draw time). */
   y: number;
 }
 
@@ -30,9 +41,12 @@ export interface Zone {
   connectionCorner: ZoneConnectionCorner;
   startDirection: SpiralStartDirection;
   spiral: PipePath | null;
-  spiralLengthM: number;
-  leaderLengthM: number;
-  areaM2: number;
+  /** Pipe length of the spiral itself, mm. Derived — recomputed, never authored. */
+  spiralLengthMm: number;
+  /** Pipe length of the leader run (both supply and return), mm. Derived. */
+  leaderLengthMm: number;
+  /** Floor area enclosed by the polygon, mm². Derived. */
+  areaMm2: number;
   /**
    * Manually-drawn leader waypoints (interior elbows only — not including the
    * anchor or manifold port, which are resolved dynamically at render/length-calc
@@ -42,11 +56,11 @@ export interface Zone {
    */
   leaderWaypoints: Point[] | null;
   /**
-   * Position along the manifold's tangent axis (offset in px from the
-   * manifold's center) where this zone's supply/return pair connects — chosen
-   * by the user by clicking the manifold while routing. `null` until routed.
+   * Position along the manifold's tangent axis (offset in mm from the manifold's
+   * centre) where this zone's supply/return pair connects — chosen by the user by
+   * clicking the manifold while routing. `null` until routed.
    */
-  manifoldPortOffsetPx: number | null;
+  manifoldPortOffsetMm: number | null;
 }
 
 export interface Manifold {
@@ -60,7 +74,11 @@ export type ToolMode =
   | 'drawZone'
   | 'drawRect'
   | 'editBoundary'
-  | 'routeLeader';
+  | 'routeLeader'
+  /** Drag the imported floor plan under the drawing, leaving zones and manifold put. */
+  | 'panBackground'
+  /** Tape measure: click two points to read the distance between them. */
+  | 'measure';
 
 /**
  * In-progress manual leader routing session for a single zone. The user draws
@@ -86,9 +104,13 @@ export interface DxfEntity {
   closed?: boolean;
 }
 
+/** Places DXF geometry into the drawing: `drawingMm = dxfUnit * scale + offset`. */
 export interface DxfTransform {
+  /** Millimetres. */
   offsetX: number;
+  /** Millimetres. */
   offsetY: number;
+  /** Millimetres per DXF unit. */
   scale: number;
 }
 
@@ -98,16 +120,30 @@ export type Background =
   | {
       kind: 'image';
       src: string;
+      /** The bitmap's own size, in image pixels — the one place pixels are meaningful. */
       naturalWidth: number;
       naturalHeight: number;
-      /** Computed fit-to-viewport transform (set on load) */
-      fitX: number;
-      fitY: number;
-      fitScale: number;
+      /** Top-left corner of the placed image, in drawing millimetres. */
+      x: number;
+      y: number;
+      /**
+       * Millimetres per image pixel. Assumed on import (an image carries no scale) and
+       * corrected by calibrating against a known distance.
+       */
+      mmPerPixel: number;
     };
 
 export interface CalibrationState {
   active: boolean;
   point1: Point | null;
   point2: Point | null;
+}
+
+/**
+ * A tape-measure reading. `end` is null while the second point is still being placed —
+ * the canvas fills it in from the pointer so the distance updates as the mouse moves.
+ */
+export interface MeasurementState {
+  start: Point | null;
+  end: Point | null;
 }

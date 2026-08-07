@@ -215,6 +215,18 @@ input {
   border-color: var(--accent);
 }
 
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.btn:disabled:hover {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
 .btn.active:hover {
   background: var(--accent-hover);
   color: var(--text-inverse);

@@ -7,12 +7,13 @@ const TOOL_OPTIONS: Array<{ mode: ToolMode; label: string }> = [
   { mode: 'drawZone', label: '✏️ Draw Zone' },
   { mode: 'drawRect', label: '▭ Draw Rect' },
   { mode: 'routeLeader', label: '🔗 Route Leaders' },
+  { mode: 'measure', label: '📏 Measure' },
 ];
 
 export default function Toolbar() {
   const toolMode = useStore((state) => state.toolMode);
   const setToolMode = useStore((state) => state.setToolMode);
-  const resetView = useStore((state) => state.resetView);
+  const fitViewToContent = useStore((state) => state.fitViewToContent);
 
   return (
     <div className="top-toolbar-tools">
@@ -25,8 +26,12 @@ export default function Toolbar() {
           {label}
         </button>
       ))}
-      <button className="btn tool-btn" onClick={resetView} title="Reset zoom and pan to origin">
-        🔍 Reset View
+      <button
+        className="btn tool-btn"
+        onClick={() => fitViewToContent(window.innerWidth - 320, window.innerHeight - 44)}
+        title="Zoom and pan to frame the whole drawing"
+      >
+        🔍 Fit View
       </button>
     </div>
   );

@@ -1,6 +1,7 @@
 import { type ChangeEvent, useRef, useState } from 'react';
 import DxfParser from 'dxf-parser';
-import { fitDxfToViewport, parseDxfEntities } from '../../geometry/dxfHelpers';
+import { parseDxfEntities, placeDxfInDrawing } from '../../geometry/dxfHelpers';
+import { mmToMeters } from '../../geometry/length';
 import { UFH_STORE_STORAGE_KEY, partializeStoreState, useStore } from '../../state/store';
 import HeatTab from './HeatTab';
 import ZoneCard from './ZoneCard';
@@ -9,22 +10,12 @@ const PROJECT_STORAGE_VERSION = 0;
 
 const IMAGE_ACCEPT = '.png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif';
 
-/** Compute the fit-to-viewport transform for an image. */
-function fitImageToViewport(
-    naturalWidth: number,
-    naturalHeight: number,
-    viewportWidth: number,
-    viewportHeight: number,
-    padding = 40,
-): { fitX: number; fitY: number; fitScale: number } {
-    if (naturalWidth <= 0 || naturalHeight <= 0) return { fitX: 0, fitY: 0, fitScale: 1 };
-    const scaleX = (viewportWidth - 2 * padding) / naturalWidth;
-    const scaleY = (viewportHeight - 2 * padding) / naturalHeight;
-    const fitScale = Math.min(scaleX, scaleY);
-    const fitX = (viewportWidth - naturalWidth * fitScale) / 2;
-    const fitY = (viewportHeight - naturalHeight * fitScale) / 2;
-    return { fitX, fitY, fitScale };
-}
+/**
+ * A bitmap carries no scale, so an import has to assume one; 10 mm per image pixel puts a
+ * typical plan scan in the right ballpark (a 2 000 px wide scan becomes a 20 m elevation).
+ * Calibrating against a known distance replaces the guess with the truth.
+ */
+const ASSUMED_IMAGE_MM_PER_PIXEL = 10;
 
 export default function SidePanel() {
     const {
@@ -32,10 +23,11 @@ export default function SidePanel() {
         selectedZoneId,
         manifold,
         calibration,
-        pixelsPerMeter,
         maxCircuitLengthM,
         defaultSpacingMm,
         background,
+        toolMode,
+        setToolMode,
         setBackground,
         setMaxCircuitLength,
         setDefaultSpacing,
@@ -43,11 +35,12 @@ export default function SidePanel() {
         startCalibration,
         finishCalibration,
         cancelCalibration,
+        fitViewToContent,
     } = useStore();
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const projectFileInputRef = useRef<HTMLInputElement>(null);
-    const [calibrationDistance, setCalibrationDistance] = useState('1.0');
+    const [calibrationDistance, setCalibrationDistance] = useState('1000');
     const [importError, setImportError] = useState<string | null>(null);
     const [projectError, setProjectError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'setup' | 'zones' | 'heat'>('setup');
@@ -112,12 +105,17 @@ export default function SidePanel() {
                         setImportError('DXF parsed but contains no supported entities (LINE, POLYLINE, CIRCLE, ARC). Try importing an image instead.');
                         return;
                     }
-                    const transform = fitDxfToViewport(
+                    // DXF units are assumed to be millimetres (AutoCAD's own default);
+                    // calibration corrects files drawn in metres or inches.
+                    setBackground({
+                        kind: 'dxf',
                         entities,
+                        transform: placeDxfInDrawing(entities),
+                    });
+                    fitViewToContent(
                         Math.max(window.innerWidth - 320, 320),
-                        window.innerHeight,
+                        window.innerHeight - 44,
                     );
-                    setBackground({ kind: 'dxf', entities, transform });
                 } catch (error) {
                     setImportError('Failed to parse DXF. Make sure it is a valid AutoCAD DXF file, or try importing an image.');
                     console.error(error);
@@ -136,23 +134,22 @@ export default function SidePanel() {
 
                 const img = new window.Image();
                 img.onload = () => {
-                    const vw = Math.max(window.innerWidth - 320, 320);
-                    const vh = window.innerHeight;
-                    const { fitX, fitY, fitScale } = fitImageToViewport(
-                        img.naturalWidth,
-                        img.naturalHeight,
-                        vw,
-                        vh,
-                    );
+                    // Placed at the drawing's origin rather than at a screen position, then
+                    // framed by moving the camera — so a re-import lands in the same place
+                    // however the view happens to be panned or zoomed at the time.
                     setBackground({
                         kind: 'image',
                         src,
                         naturalWidth: img.naturalWidth,
                         naturalHeight: img.naturalHeight,
-                        fitX,
-                        fitY,
-                        fitScale,
+                        x: 0,
+                        y: 0,
+                        mmPerPixel: ASSUMED_IMAGE_MM_PER_PIXEL,
                     });
+                    fitViewToContent(
+                        Math.max(window.innerWidth - 320, 320),
+                        window.innerHeight - 44,
+                    );
                 };
                 img.onerror = () => {
                     setImportError('Failed to load image file.');
@@ -169,7 +166,7 @@ export default function SidePanel() {
     };
 
     const totalGrand = zones.reduce(
-        (sum, zone) => sum + zone.spiralLengthM + zone.leaderLengthM,
+        (sum, zone) => sum + mmToMeters(zone.spiralLengthMm + zone.leaderLengthMm),
         0,
     );
 
@@ -248,45 +245,61 @@ export default function SidePanel() {
                         {importError && <p className="error">{importError}</p>}
                         {bgStatus && <p className="info">{bgStatus}</p>}
                         {background && (
-                            <button
-                                className="btn btn-secondary"
-                                style={{ marginTop: '4px' }}
-                                onClick={() => setBackground(null)}
-                            >
-                                🗑 Clear background
-                            </button>
+                            <>
+                                <button
+                                    className={`btn ${toolMode === 'panBackground' ? 'active' : ''}`}
+                                    style={{ marginTop: '4px' }}
+                                    onClick={() =>
+                                        setToolMode(toolMode === 'panBackground' ? 'select' : 'panBackground')
+                                    }
+                                >
+                                    ✥ {toolMode === 'panBackground' ? 'Done moving plan' : 'Move plan'}
+                                </button>
+                                <button
+                                    className="btn btn-secondary"
+                                    style={{ marginTop: '4px' }}
+                                    onClick={() => setBackground(null)}
+                                >
+                                    🗑 Clear background
+                                </button>
+                            </>
                         )}
                     </section>
 
                     <section className="panel-section">
                         <h2>📏 Scale Calibration</h2>
                         <p className="info">
-                            1 px = {pixelsPerMeter > 0 ? (1000 / pixelsPerMeter).toFixed(1) : '?'} mm
+                            The drawing is in millimetres, so zones are already true to size.
+                            Calibrating resizes the imported plan to match them — measure two
+                            points on the plan and give their real distance.
                         </p>
+                        {!background && (
+                            <p className="info">Import a floor plan first — there is nothing to calibrate.</p>
+                        )}
                         {!calibration.active ? (
-                            <button className="btn" onClick={startCalibration}>
+                            <button className="btn" onClick={startCalibration} disabled={!background}>
                                 📏 Calibrate Scale
                             </button>
                         ) : (
                             <div>
                                 <p className="info">
                                     {!calibration.point1
-                                        ? 'Click first point on canvas'
+                                        ? 'Click a point on the plan — it stays put as the plan resizes'
                                         : !calibration.point2
-                                            ? 'Click second point on canvas'
+                                            ? 'Click a second point a known distance away'
                                             : 'Enter the real distance between the points'}
                                 </p>
                                 {calibration.point2 && (
                                     <div className="calibration-input">
                                         <input
                                             type="number"
-                                            step="0.1"
-                                            min="0.01"
+                                            step="10"
+                                            min="1"
                                             value={calibrationDistance}
                                             onChange={(event) => setCalibrationDistance(event.target.value)}
-                                            placeholder="Real distance (m)"
+                                            placeholder="Real distance (mm)"
                                         />
-                                        <span>m</span>
+                                        <span>mm</span>
                                         <button
                                             className="btn btn-primary"
                                             onClick={() => finishCalibration(Number(calibrationDistance))}

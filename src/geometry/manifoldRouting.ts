@@ -1,15 +1,18 @@
 import { Manifold, Point, Zone } from '../types';
 
-const MANIFOLD_MIN_LENGTH_PX = 80;
-const MANIFOLD_THICKNESS_PX = 28;
-const MANIFOLD_PORT_END_PADDING_PX = 12;
-/** 5 cm per zone, split evenly into supply and return — 2.5 cm per line. */
-const MANIFOLD_ZONE_PITCH_M = 0.05;
-const MANIFOLD_FALLBACK_ZONE_PITCH_PX = 10;
+/**
+ * The manifold's own dimensions, in millimetres like everything else in the drawing.
+ * `MANIFOLD_ZONE_PITCH_MM` is the real hardware spacing — 50 mm per zone, split evenly
+ * into a supply and a return tapping, so every pipe line sits 25 mm from the next.
+ */
+const MANIFOLD_ZONE_PITCH_MM = 50;
+const MANIFOLD_MIN_LENGTH_MM = 800;
+const MANIFOLD_THICKNESS_MM = 280;
+const MANIFOLD_PORT_END_PADDING_MM = 120;
 
 export interface ManifoldLayout {
-  lengthPx: number;
-  thicknessPx: number;
+  lengthMm: number;
+  thicknessMm: number;
   tangent: Point;
   normal: Point;
   sideSign: 1 | -1;
@@ -33,54 +36,36 @@ export function getManifoldTangent(manifold: Manifold): Point {
   return getManifoldAxes(manifold).tangent;
 }
 
-function getManifoldZonePitchPx(pixelsPerMeter: number): number {
-  if (!Number.isFinite(pixelsPerMeter) || pixelsPerMeter <= 0) {
-    return MANIFOLD_FALLBACK_ZONE_PITCH_PX;
-  }
-
-  return MANIFOLD_ZONE_PITCH_M * pixelsPerMeter;
-}
-
 /**
- * Spacing between neighbouring pipe lines at the manifold — half a zone's 5 cm pitch, so
- * every line sits 2.5 cm from the next whether they're a zone's own supply/return pair or
+ * Spacing between neighbouring pipe lines at the manifold — half a zone's 50 mm pitch, so
+ * every line sits 25 mm from the next whether they're a zone's own supply/return pair or
  * the ports of adjacent zones.
  */
-export function getManifoldLinePitchPx(pixelsPerMeter: number): number {
-  return getManifoldZonePitchPx(pixelsPerMeter) / 2;
-}
+export const MANIFOLD_LINE_PITCH_MM = MANIFOLD_ZONE_PITCH_MM / 2;
 
 /**
- * `pairGapPx` separates a single zone's supply and return ports — one line pitch.
- * `pitchPx` is the per-zone width, used only to size the manifold by zone count —
+ * `pairGapMm` separates a single zone's supply and return ports — one line pitch.
+ * `pitchMm` is the per-zone width, used only to size the manifold by zone count —
  * connections themselves aren't confined to a grid and can be freely slid anywhere
  * along the length.
  */
-function getManifoldSpacing(pixelsPerMeter: number): { pitchPx: number; pairGapPx: number } {
-  return {
-    pitchPx: getManifoldZonePitchPx(pixelsPerMeter),
-    pairGapPx: getManifoldLinePitchPx(pixelsPerMeter),
-  };
-}
+const MANIFOLD_SPACING = {
+  pitchMm: MANIFOLD_ZONE_PITCH_MM,
+  pairGapMm: MANIFOLD_LINE_PITCH_MM,
+};
 
-export function getManifoldLayout(
-  manifold: Manifold,
-  zones: Zone[],
-  pixelsPerMeter: number,
-): ManifoldLayout {
+export function getManifoldLayout(manifold: Manifold, zones: Zone[]): ManifoldLayout {
   const { tangent, normal } = getManifoldAxes(manifold);
-  const { pitchPx: zonePitchPx, pairGapPx } = getManifoldSpacing(pixelsPerMeter);
+  const { pitchMm, pairGapMm } = MANIFOLD_SPACING;
 
   const variableLength =
     zones.length <= 1
-      ? pairGapPx + MANIFOLD_PORT_END_PADDING_PX * 2
-      : (zones.length - 1) * zonePitchPx + pairGapPx + MANIFOLD_PORT_END_PADDING_PX * 2;
-
-  const lengthPx = Math.max(MANIFOLD_MIN_LENGTH_PX, variableLength);
+      ? pairGapMm + MANIFOLD_PORT_END_PADDING_MM * 2
+      : (zones.length - 1) * pitchMm + pairGapMm + MANIFOLD_PORT_END_PADDING_MM * 2;
 
   return {
-    lengthPx,
-    thicknessPx: MANIFOLD_THICKNESS_PX,
+    lengthMm: Math.max(MANIFOLD_MIN_LENGTH_MM, variableLength),
+    thicknessMm: MANIFOLD_THICKNESS_MM,
     tangent,
     normal,
     // Keep side fixed to manifold local +normal so rotation directly controls entry side.
@@ -88,17 +73,17 @@ export function getManifoldLayout(
   };
 }
 
-/** World-space point at a given tangential offset along the manifold's connection edge. */
-export function pointAtManifoldOffset(manifold: Manifold, offsetPx: number): Point {
+/** Point at a given tangential offset along the manifold's connection edge. */
+export function pointAtManifoldOffset(manifold: Manifold, offsetMm: number): Point {
   const { tangent, normal } = getManifoldAxes(manifold);
-  const sideOffset = MANIFOLD_THICKNESS_PX / 2;
+  const sideOffset = MANIFOLD_THICKNESS_MM / 2;
   const sideCenter = {
     x: manifold.position.x + normal.x * sideOffset,
     y: manifold.position.y + normal.y * sideOffset,
   };
   return {
-    x: sideCenter.x + tangent.x * offsetPx,
-    y: sideCenter.y + tangent.y * offsetPx,
+    x: sideCenter.x + tangent.x * offsetMm,
+    y: sideCenter.y + tangent.y * offsetMm,
   };
 }
 
@@ -109,25 +94,21 @@ export interface ZoneManifoldPorts {
 
 /**
  * Resolve a zone's supply/return connection points from its user-chosen position
- * along the manifold (`zone.manifoldPortOffsetPx`, set by clicking the manifold
+ * along the manifold (`zone.manifoldPortOffsetMm`, set by clicking the manifold
  * while routing, or by sliding it afterward). Returns null when the zone hasn't
  * been connected to the manifold yet.
  */
-export function getZoneManifoldPorts(
-  manifold: Manifold,
-  zone: Zone,
-  pixelsPerMeter: number,
-): ZoneManifoldPorts | null {
-  if (zone.manifoldPortOffsetPx === null || zone.manifoldPortOffsetPx === undefined) return null;
+export function getZoneManifoldPorts(manifold: Manifold, zone: Zone): ZoneManifoldPorts | null {
+  if (zone.manifoldPortOffsetMm === null || zone.manifoldPortOffsetMm === undefined) return null;
 
-  const { pairGapPx } = getManifoldSpacing(pixelsPerMeter);
+  const { pairGapMm } = MANIFOLD_SPACING;
   return {
-    supplyPort: pointAtManifoldOffset(manifold, zone.manifoldPortOffsetPx - pairGapPx / 2),
-    returnPort: pointAtManifoldOffset(manifold, zone.manifoldPortOffsetPx + pairGapPx / 2),
+    supplyPort: pointAtManifoldOffset(manifold, zone.manifoldPortOffsetMm - pairGapMm / 2),
+    returnPort: pointAtManifoldOffset(manifold, zone.manifoldPortOffsetMm + pairGapMm / 2),
   };
 }
 
-/** Project a point onto the manifold's tangent axis; the scalar offset from its center. */
+/** Project a point onto the manifold's tangent axis; the scalar offset from its centre. */
 export function projectPointOntoManifold(manifold: Manifold, point: Point): number {
   const { tangent } = getManifoldAxes(manifold);
   const dx = point.x - manifold.position.x;
@@ -135,21 +116,20 @@ export function projectPointOntoManifold(manifold: Manifold, point: Point): numb
   return dx * tangent.x + dy * tangent.y;
 }
 
-/** Furthest a connection can sit from the manifold's center and still clear the end padding. */
-function getManifoldOffsetHalfSpan(manifold: Manifold, zones: Zone[], pixelsPerMeter: number): number {
-  const layout = getManifoldLayout(manifold, zones, pixelsPerMeter);
-  return Math.max(0, layout.lengthPx / 2 - MANIFOLD_PORT_END_PADDING_PX);
+/** Furthest a connection can sit from the manifold's centre and still clear the end padding. */
+function getManifoldOffsetHalfSpan(manifold: Manifold, zones: Zone[]): number {
+  const layout = getManifoldLayout(manifold, zones);
+  return Math.max(0, layout.lengthMm / 2 - MANIFOLD_PORT_END_PADDING_MM);
 }
 
 /** Clamp a raw tangential offset within the manifold body — connections aren't confined to a grid. */
 export function clampManifoldOffset(
   manifold: Manifold,
   zones: Zone[],
-  pixelsPerMeter: number,
-  rawOffsetPx: number,
+  rawOffsetMm: number,
 ): number {
-  const halfSpan = getManifoldOffsetHalfSpan(manifold, zones, pixelsPerMeter);
-  return Math.max(-halfSpan, Math.min(halfSpan, rawOffsetPx));
+  const halfSpan = getManifoldOffsetHalfSpan(manifold, zones);
+  return Math.max(-halfSpan, Math.min(halfSpan, rawOffsetMm));
 }
 
 /**
@@ -159,14 +139,10 @@ export function clampManifoldOffset(
 export function clampPointToManifoldEdge(
   manifold: Manifold,
   zones: Zone[],
-  pixelsPerMeter: number,
   point: Point,
 ): Point {
-  const offsetPx = clampManifoldOffset(
+  return pointAtManifoldOffset(
     manifold,
-    zones,
-    pixelsPerMeter,
-    projectPointOntoManifold(manifold, point),
+    clampManifoldOffset(manifold, zones, projectPointOntoManifold(manifold, point)),
   );
-  return pointAtManifoldOffset(manifold, offsetPx);
 }

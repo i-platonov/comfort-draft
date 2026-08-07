@@ -3,9 +3,9 @@ import Konva from 'konva';
 import { Circle, Layer, Line } from 'react-konva';
 import { Point, Manifold, Zone } from '../../types';
 import { useStore } from '../../state/store';
-import { clampPointToManifoldEdge, getManifoldLinePitchPx } from '../../geometry/manifoldRouting';
+import { MANIFOLD_LINE_PITCH_MM, clampPointToManifoldEdge } from '../../geometry/manifoldRouting';
 import {
-  DRAG_ALIGN_TOLERANCE_PX,
+  DRAG_ALIGN_TOLERANCE_MM,
   buildLeaderRenderLines,
   buildManualLeaderPaths,
 } from '../../geometry/manualRouting';
@@ -14,23 +14,30 @@ import { canvas } from '../../theme';
 interface Props {
   zones: Zone[];
   manifold: Manifold | null;
-  pixelsPerMeter: number;
+  /** Screen pixels per millimetre — turns the screen-sized affordances below into mm. */
+  pxPerMm: number;
 }
 
 const toFlatPoints = (points: Point[]) => points.flatMap((point) => [point.x, point.y]);
 
-const SEGMENT_HIT_WIDTH = 14;
-/** The port dot is drawn at true size — one 2.5 cm line pitch across — so it needs its own generous hit area. */
-const PORT_DOT_HIT_WIDTH = 18;
+/*
+ * Screen-space affordances: grab targets and the minimum visible dot. These are the
+ * things that must stay the same size however far the drawing is zoomed, so each is
+ * divided by pxPerMm to become the millimetres that render to that many pixels.
+ */
+const SEGMENT_HIT_WIDTH_PX = 14;
+/** The port dot is drawn at true size — one 25 mm line pitch across — so it needs its own generous hit area. */
+const PORT_DOT_HIT_WIDTH_PX = 18;
 /** Zoomed far out, true size rounds away to nothing; keep the dot just visible. */
 const PORT_DOT_MIN_RADIUS_PX = 1;
+const WAYPOINT_HANDLE_RADIUS_PX = 5;
 
 function setCursor(event: Konva.KonvaEventObject<Event>, cursor: string) {
   const stage = event.target.getStage();
   if (stage) stage.container().style.cursor = cursor;
 }
 
-function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
+function LeaderLayer({ zones, manifold, pxPerMm }: Props) {
   const toolMode = useStore((state) => state.toolMode);
   const updateLeaderWaypoint = useStore((state) => state.updateLeaderWaypoint);
   const updateLeaderSegment = useStore((state) => state.updateLeaderSegment);
@@ -42,16 +49,16 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
   // every prior increment and compound into runaway movement.
   const segmentDragBaseRef = useRef<number | null>(null);
 
-  const paths = useMemo(
-    () => buildManualLeaderPaths(zones, manifold, pixelsPerMeter),
-    [zones, manifold, pixelsPerMeter],
-  );
+  const paths = useMemo(() => buildManualLeaderPaths(zones, manifold), [zones, manifold]);
 
   if (!manifold) return <Layer />;
 
   const editable = toolMode === 'routeLeader';
-  // Drawn at the size of the thing it represents: one 2.5 cm line pitch across.
-  const portDotRadius = Math.max(PORT_DOT_MIN_RADIUS_PX, getManifoldLinePitchPx(pixelsPerMeter) / 2);
+  const screenPxToMm = (px: number) => px / pxPerMm;
+  // Drawn at the size of the thing it represents: one 25 mm line pitch across.
+  const portDotRadiusMm = Math.max(screenPxToMm(PORT_DOT_MIN_RADIUS_PX), MANIFOLD_LINE_PITCH_MM / 2);
+  const segmentHitWidthMm = screenPxToMm(SEGMENT_HIT_WIDTH_PX);
+  const waypointHandleRadiusMm = screenPxToMm(WAYPOINT_HANDLE_RADIUS_PX);
 
   return (
     <Layer>
@@ -63,10 +70,9 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
         // approach into the manifold, which the user steers via the port dot instead.
         const waypoints = zone.leaderWaypoints;
         const approachIsDirect = leaderPath.length === waypoints.length + 2;
-        // Bends match the zone's own pipe: the spiral fillets its corners at half the
-        // pipe spacing, and a leader is the same pipe on the same floor.
-        const bendRadiusPx = ((zone.spacingMm / 1000) * pixelsPerMeter) / 2;
-        const { lineA, lineB } = buildLeaderRenderLines(leaderPath, ports, bendRadiusPx);
+        // The pair is drawn at the zone's own pipe spacing — it's the same pipe, leaving
+        // the same spiral — and narrows onto the manifold tappings at the end.
+        const { lineA, lineB } = buildLeaderRenderLines(leaderPath, ports, zone.spacingMm);
 
         return (
           <Fragment key={zoneId}>
@@ -74,6 +80,7 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
               points={toFlatPoints(lineA)}
               stroke={zone.color}
               strokeWidth={2}
+              strokeScaleEnabled={false}
               opacity={0.7}
               listening={false}
             />
@@ -81,6 +88,7 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
               points={toFlatPoints(lineB)}
               stroke={zone.color}
               strokeWidth={2}
+              strokeScaleEnabled={false}
               opacity={0.5}
               listening={false}
             />
@@ -89,9 +97,9 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
                 if (index === waypoints.length - 1) return null;
                 const next = waypoints[index + 1];
                 const axis: 'x' | 'y' | null =
-                  Math.abs(point.x - next.x) < DRAG_ALIGN_TOLERANCE_PX
+                  Math.abs(point.x - next.x) < DRAG_ALIGN_TOLERANCE_MM
                     ? 'x'
-                    : Math.abs(point.y - next.y) < DRAG_ALIGN_TOLERANCE_PX
+                    : Math.abs(point.y - next.y) < DRAG_ALIGN_TOLERANCE_MM
                       ? 'y'
                       : null;
                 if (!axis) return null;
@@ -113,8 +121,8 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
                     y={0}
                     points={[point.x, point.y, next.x, next.y]}
                     stroke="transparent"
-                    strokeWidth={SEGMENT_HIT_WIDTH}
-                    hitStrokeWidth={SEGMENT_HIT_WIDTH}
+                    strokeWidth={segmentHitWidthMm}
+                    hitStrokeWidth={segmentHitWidthMm}
                     draggable
                     dragBoundFunc={(pos) => (axis === 'x' ? { x: pos.x, y: 0 } : { x: 0, y: pos.y })}
                     onMouseEnter={(event) => setCursor(event, axis === 'x' ? 'col-resize' : 'row-resize')}
@@ -148,9 +156,9 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
                 const point = waypoints[waypointIndex];
                 const next = leaderPath[leaderPath.length - 1];
                 const axis: 'x' | 'y' | null =
-                  Math.abs(point.x - next.x) < DRAG_ALIGN_TOLERANCE_PX
+                  Math.abs(point.x - next.x) < DRAG_ALIGN_TOLERANCE_MM
                     ? 'x'
-                    : Math.abs(point.y - next.y) < DRAG_ALIGN_TOLERANCE_PX
+                    : Math.abs(point.y - next.y) < DRAG_ALIGN_TOLERANCE_MM
                       ? 'y'
                       : null;
                 if (!axis) return null;
@@ -172,8 +180,8 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
                     y={0}
                     points={[point.x, point.y, next.x, next.y]}
                     stroke="transparent"
-                    strokeWidth={SEGMENT_HIT_WIDTH}
-                    hitStrokeWidth={SEGMENT_HIT_WIDTH}
+                    strokeWidth={segmentHitWidthMm}
+                    hitStrokeWidth={segmentHitWidthMm}
                     draggable
                     dragBoundFunc={(pos) => (axis === 'x' ? { x: pos.x, y: 0 } : { x: 0, y: pos.y })}
                     onMouseEnter={(event) => setCursor(event, axis === 'x' ? 'col-resize' : 'row-resize')}
@@ -198,7 +206,7 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
                   key={waypointIndex}
                   x={point.x}
                   y={point.y}
-                  radius={5}
+                  radius={waypointHandleRadiusMm}
                   fill={zone.color}
                   stroke={canvas.stubOutline}
                   strokeWidth={1.5}
@@ -237,7 +245,7 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
                   const dragged = { x: event.target.x(), y: event.target.y() };
                   slideZoneManifoldPort(zone.id, dragged);
                   event.target.position(
-                    clampPointToManifoldEdge(manifold, zones, pixelsPerMeter, dragged),
+                    clampPointToManifoldEdge(manifold, zones, dragged),
                   );
                 };
 
@@ -246,11 +254,12 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
                     key="manifold-port"
                     x={port.x}
                     y={port.y}
-                    radius={portDotRadius}
+                    radius={portDotRadiusMm}
                     fill={zone.color}
                     stroke={editable ? canvas.portDotRing : undefined}
                     strokeWidth={editable ? 1 : 0}
-                    hitStrokeWidth={PORT_DOT_HIT_WIDTH}
+                    strokeScaleEnabled={false}
+                    hitStrokeWidth={screenPxToMm(PORT_DOT_HIT_WIDTH_PX)}
                     listening={editable}
                     draggable={editable}
                     onMouseEnter={(event) => setCursor(event, 'grab')}
