@@ -5,6 +5,7 @@ import { useStore } from '../../state/store';
 import { getSpiralStubs, roundPathCorners } from '../../geometry/spiral';
 import { mm2ToSquareMeters } from '../../geometry/length';
 import {
+  leaderBendRadiusMm,
   leaderPairPitchMm,
   computeLeaderPreviewPath,
   getIncomingLegDirection,
@@ -277,8 +278,7 @@ export default function Canvas() {
 
     // Filleted like the committed leader, so the preview shows the pipe that will be laid.
     const halfGapMm = leaderPairPitchMm(zone.spacingMm) / 2;
-    const bendRadiusMm = Math.max(zone.spacingMm / 2, halfGapMm * 2);
-    const path = roundPathCorners(drawn, bendRadiusMm);
+    const path = roundPathCorners(drawn, leaderBendRadiusMm(zone.spacingMm));
 
     return {
       path,

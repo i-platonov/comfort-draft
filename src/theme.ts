@@ -63,8 +63,6 @@ export const canvas = {
   /** The manifold body stays dark — it's hardware sitting on the plan, not part of it. */
   manifoldFill: palette.slate700,
   manifoldStroke: palette.blue600,
-  /** Armed for its one-shot drag, where a stray move would discard every routed leader. */
-  manifoldStrokeArmed: palette.amber500,
   manifoldHandleFill: palette.blue600,
   manifoldHandleStroke: palette.white,
   manifoldLabel: palette.white,

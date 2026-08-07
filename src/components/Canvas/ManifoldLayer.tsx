@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useMemo } from 'react';
 import { Circle, Group, Layer, Rect, Text } from 'react-konva';
 import { Manifold, Zone } from '../../types';
 import { useStore } from '../../state/store';
@@ -30,10 +30,15 @@ function normalizeAngle(degrees: number): number {
 function ManifoldLayer({ manifold, zones, pxPerMm }: Props) {
   const updateManifoldPosition = useStore((state) => state.updateManifoldPosition);
   const setManifoldRotation = useStore((state) => state.setManifoldRotation);
-  // A single click-drag can nudge the manifold and silently wipe every zone's leader
-  // routing (recomputeSpiral drops it whenever the manifold moves), so moving it requires
-  // an explicit double-click to arm a one-time drag rather than being draggable outright.
-  const [armed, setArmed] = useState(false);
+  const toolMode = useStore((state) => state.toolMode);
+  /*
+   * Draggable outright while selecting — moving the manifold carries its connections with
+   * it and leaves the routing intact, so there's nothing to guard against.
+   *
+   * Not while routing, though: there a click on the manifold is how a leader is connected,
+   * and a draggable body would turn the smallest wobble during that click into a drag.
+   */
+  const draggable = toolMode === 'select';
 
   const layout = useMemo(
     () => (manifold ? getManifoldLayout(manifold, zones) : null),
@@ -58,25 +63,20 @@ function ManifoldLayer({ manifold, zones, pxPerMm }: Props) {
         offsetX={width / 2}
         offsetY={height / 2}
         rotation={rotationDeg}
-        draggable={armed}
-        onDblClick={(event) => {
-          event.cancelBubble = true;
-          setArmed(true);
-        }}
+        draggable={draggable}
         onDragEnd={(event) => {
           event.cancelBubble = true;
           updateManifoldPosition({
             x: event.target.x(),
             y: event.target.y(),
           });
-          setArmed(false);
         }}
       >
         <Rect
           width={width}
           height={height}
           fill={canvas.manifoldFill}
-          stroke={armed ? canvas.manifoldStrokeArmed : canvas.manifoldStroke}
+          stroke={canvas.manifoldStroke}
           strokeWidth={2}
           strokeScaleEnabled={false}
           cornerRadius={BODY_CORNER_RADIUS_MM}

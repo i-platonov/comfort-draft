@@ -2,6 +2,7 @@ import { Manifold, Point, Zone } from '../types';
 import { getSpiralStubs, roundPathCorners } from './spiral';
 import { distanceMm } from './length';
 import { ManifoldLayout, ZoneManifoldPorts, getZoneManifoldPorts } from './manifoldRouting';
+import { PIPE_BEND_RADIUS_MM } from '../pipeSpec';
 
 const EPSILON = 1e-6;
 
@@ -24,6 +25,19 @@ function unitDelta(from: Point, to: Point): Point {
  */
 export function leaderPairPitchMm(pipeSpacingMm: number): number {
   return pipeSpacingMm;
+}
+
+/**
+ * Radius the corners of a leader are drawn at: the pipe's own bend radius, since a leader
+ * is a free run and can be formed to whatever the pipe allows.
+ *
+ * The floor is the only concession to geometry. The pair is drawn a half-pitch either side
+ * of the centreline, so the inner line turns that much tighter — hold the centreline out at
+ * least a half-pitch and the inner line can pinch to a point at worst, rather than
+ * inverting through itself.
+ */
+export function leaderBendRadiusMm(pipeSpacingMm: number): number {
+  return Math.max(PIPE_BEND_RADIUS_MM, leaderPairPitchMm(pipeSpacingMm) / 2);
 }
 
 /**
@@ -430,11 +444,7 @@ export function buildLeaderRenderLines(
   pipeSpacingMm: number,
 ): LeaderRenderLines {
   const halfGapMm = leaderPairPitchMm(pipeSpacingMm) / 2;
-  // A pipe can't turn square, and the inner line of the pair turns tighter than the
-  // centreline by a half-gap — so the centreline's radius has to clear that or the inner
-  // line folds through itself at the corner.
-  const radiusMm = Math.max(pipeSpacingMm / 2, halfGapMm * 2);
-  const rounded = roundPathCorners(leaderPath, radiusMm);
+  const rounded = roundPathCorners(leaderPath, leaderBendRadiusMm(pipeSpacingMm));
 
   return {
     lineA: landOnPort(offsetPolyline(rounded, halfGapMm), rounded, ports, halfGapMm),

@@ -777,33 +777,31 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   setToolMode: (mode) => set({ toolMode: mode, drawingPoints: [], drawRectStart: null, routing: null }),
 
   setManifold: (pos) => {
-    const previousRotation = get().manifold?.rotationDeg ?? 0;
-    set({ manifold: { position: pos, rotationDeg: previousRotation }, toolMode: 'select', routing: null });
-    const { zones } = get();
-    const updated = zones.map((zone) =>
-      recomputeSpiral(zone, { position: pos, rotationDeg: previousRotation }),
-    );
-    set({ zones: updated });
+    const rotationDeg = get().manifold?.rotationDeg ?? 0;
+    const manifold = { position: pos, rotationDeg };
+    set({ manifold, toolMode: 'select', routing: null, zones: recomputeZones(get().zones, manifold) });
   },
 
   updateManifoldPosition: (pos) => {
     const rotationDeg = get().manifold?.rotationDeg ?? 0;
-    set({ manifold: { position: pos, rotationDeg }, routing: null });
-    const { zones } = get();
-    const updated = zones.map((zone) =>
-      recomputeSpiral(zone, { position: pos, rotationDeg }),
-    );
-    set({ zones: updated });
+    const manifold = { position: pos, rotationDeg };
+    /*
+     * Moving the manifold keeps every routed leader. A zone's connection is stored as an
+     * offset along the manifold's own length, and the spiral's shape depends on the zone's
+     * connection corner rather than on where the manifold sits — so the ports travel with
+     * the manifold, the drawn waypoints stay where they were put, and the run between them
+     * re-aims itself. Only the recorded lengths need redoing.
+     */
+    set({ manifold, routing: null, zones: recomputeZones(get().zones, manifold) });
   },
 
   setManifoldRotation: (rotationDeg) => {
-    const manifold = get().manifold;
-    if (!manifold) return;
-    set({
-      manifold: { ...manifold, rotationDeg: normalizeRotation(rotationDeg) },
-      routing: null,
-      zones: get().zones.map(clearZoneLeaderRouting),
-    });
+    const current = get().manifold;
+    if (!current) return;
+    // Rotating swings the ports around the manifold's centre; as with moving it, the
+    // leaders follow rather than being thrown away.
+    const manifold = { ...current, rotationDeg: normalizeRotation(rotationDeg) };
+    set({ manifold, routing: null, zones: recomputeZones(get().zones, manifold) });
   },
 
   addDrawingPoint: (pt) => set((state) => ({ drawingPoints: [...state.drawingPoints, pt] })),

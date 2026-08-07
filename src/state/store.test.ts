@@ -292,6 +292,39 @@ describe('useStore persistence', () => {
     expect(Math.abs(horizontalStart.y - verticalStart.y)).toBeLessThan(300);
   });
 
+  it('carries leader routing along when the manifold is moved or turned', () => {
+    const store = createUfhStore();
+
+    store.setState({
+      manifold: { position: { x: 5000, y: 1000 }, rotationDeg: 90 },
+      zones: [persistedZone],
+    });
+    store.getState().recomputeZoneSpiral(persistedZone.id);
+    store.getState().startRouteZone(persistedZone.id);
+    store.getState().addRoutePoint({ x: 3000, y: 1900 });
+    store.getState().finishRouting({ x: 5000, y: 1000 });
+
+    const routed = store.getState().zones[0];
+    expect(routed.leaderWaypoints).not.toBeNull();
+    const spiralBefore = routed.spiral;
+
+    store.getState().updateManifoldPosition({ x: 7000, y: 2500 });
+
+    const moved = store.getState().zones[0];
+    // The drawn waypoints and the connection's place along the manifold are untouched;
+    // the ports travel with the manifold, so the run between them simply re-aims.
+    expect(moved.leaderWaypoints).toEqual(routed.leaderWaypoints);
+    expect(moved.manifoldPortOffsetMm).toBe(routed.manifoldPortOffsetMm);
+    // The spiral doesn't depend on where the manifold sits, only on the zone's own corner.
+    expect(moved.spiral).toEqual(spiralBefore);
+    // The leader is longer now that the manifold is further away.
+    expect(moved.leaderLengthMm).toBeGreaterThan(routed.leaderLengthMm);
+
+    store.getState().setManifoldRotation(180);
+    expect(store.getState().zones[0].leaderWaypoints).toEqual(routed.leaderWaypoints);
+    expect(store.getState().zones[0].manifoldPortOffsetMm).toBe(routed.manifoldPortOffsetMm);
+  });
+
   it('calibrates the imported plan without touching the design', () => {
     const store = createUfhStore();
     const manifold = { position: { x: 5000, y: 1000 }, rotationDeg: 90 };
