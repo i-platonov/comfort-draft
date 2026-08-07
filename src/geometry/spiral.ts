@@ -1,8 +1,23 @@
 import { Point, PipePath, Polygon } from '../types';
+import { PIPE_BEND_RADIUS_MM } from '../pipeSpec';
 
 type ManifoldSide = 'top' | 'right' | 'bottom' | 'left';
 
 const EPSILON = 1e-6;
+
+/**
+ * Radius the spiral's own corners are formed at, millimetres.
+ *
+ * Half the pipe spacing is the preference: it makes each ring's corner concentric with the
+ * ring outside it, so the passes stay their spacing apart right through the corner instead
+ * of bunching up. But it is only a preference — below 2 × PIPE_BEND_RADIUS_MM of spacing it
+ * asks for a bend tighter than the pipe will take, and there the pipe's own minimum wins.
+ * A wider corner costs nothing at a right angle: both rings move off the corner by the same
+ * amount along the same diagonal, so the gap between them is unchanged.
+ */
+export function spiralBendRadiusMm(spacingMm: number): number {
+    return Math.max(PIPE_BEND_RADIUS_MM, spacingMm / 2);
+}
 
 /**
  * How far a hand-drawn corner may sit off-square before the edge is taken as a genuine
@@ -668,16 +683,16 @@ function clampLeftwardCenterLeg(
     y: number,
     paths: Point[][],
     spacing: number,
-    turnRadius: number,
+    turnReach: number,
     polygon?: Polygon,
 ): number {
     let safeX = desiredX;
 
     /*
      * The centerline must remain one spacing away from existing pipework.
-     * The semicircular center turn also extends turnRadius to the left.
+     * The center turn also extends turnReach to the left.
      */
-    const requiredClearance = spacing + turnRadius;
+    const requiredClearance = spacing + turnReach;
 
     for (const path of paths) {
         const segments = getSegments(path);
@@ -742,6 +757,7 @@ function addFinalCenterLeg(
     supply: Point[],
     returnInward: Point[],
     spacing: number,
+    bendRadius: number,
     polygon?: Polygon,
 ): boolean {
     if (supply.length < 4 || returnInward.length < 4) {
@@ -781,7 +797,25 @@ function addFinalCenterLeg(
         return false;
     }
 
-    const turnRadius = centerLaneDistance / 2;
+    /*
+     * Turning a leg off the straight each lane currently ends on puts a corner at both ends
+     * of that straight. It was only ever asked to carry one, so a leg is off the table when
+     * it hasn't the length for two.
+     */
+    const minimumApproach = 2 * bendRadius - EPSILON;
+
+    if (
+        laneSegmentLength(supply, supply.length - 1) < minimumApproach ||
+        laneSegmentLength(returnInward, returnInward.length - 1) < minimumApproach
+    ) {
+        return false;
+    }
+
+    /*
+     * The turn joining the lanes is a half circle, over whatever the gap between them has
+     * been opened out to, and so reaches its own radius past where they stop.
+     */
+    const turnReach = Math.max(bendRadius, centerLaneDistance / 2);
     const allPaths = [supply, returnInward];
 
     const safeSupplyX = clampLeftwardCenterLeg(
@@ -790,7 +824,7 @@ function addFinalCenterLeg(
         supplyEnd.y,
         allPaths,
         spacing,
-        turnRadius,
+        turnReach,
         polygon,
     );
 
@@ -800,7 +834,7 @@ function addFinalCenterLeg(
         returnEnd.y,
         allPaths,
         spacing,
-        turnRadius,
+        turnReach,
         polygon,
     );
 
@@ -814,10 +848,10 @@ function addFinalCenterLeg(
     );
 
     /*
-     * Do not add a tiny leg. After corner rounding, such a leg would collapse
-     * or produce unstable geometry.
+     * Do not add a tiny leg. It carries the corner where it turns off the ring, which eats
+     * a radius off it, and hands what is left to the center turn.
      */
-    const minimumLegLength = spacing / 2;
+    const minimumLegLength = Math.max(spacing / 2, bendRadius);
 
     if (
         supplyEnd.x - safeX < minimumLegLength ||
@@ -910,10 +944,20 @@ export function roundPathCorners(
         const deflection = Math.acos(Math.max(-1, Math.min(1, alignment)));
         const tangentRatio = isRightAngle ? 1 : Math.tan(deflection / 2);
 
+        /*
+         * A straight between two corners is halved so both fillets get a share of it. The
+         * two at the ends of the path are not shared with anything, so this corner may run
+         * all the way out to the open end - which is what lets a path finish on a proper
+         * radius instead of one scaled to its last straight.
+         */
+        const incomingShare = i === 1 ? incomingLength : incomingLength / 2;
+        const outgoingShare =
+            i === points.length - 2 ? outgoingLength : outgoingLength / 2;
+
         const tangentLength = Math.min(
             preferredRadius * tangentRatio,
-            incomingLength / 2,
-            outgoingLength / 2,
+            incomingShare,
+            outgoingShare,
         );
 
         const radius = tangentLength / tangentRatio;
@@ -1174,6 +1218,182 @@ function framesToPath(
     return simplifyOrthogonalPath(path);
 }
 
+/** Length of the straight ending at `lane[index]`, or Infinity where there isn't one. */
+function laneSegmentLength(lane: Point[], index: number): number {
+    const end = lane[index];
+    const start = lane[index - 1];
+
+    if (!start || !end) return Infinity;
+
+    return Math.hypot(end.x - start.x, end.y - start.y);
+}
+
+/**
+ * Whether the innermost `length` points of a lane end in straights long enough to form
+ * their corners at `bendRadius`.
+ *
+ * A corner eats one radius off each of the two straights meeting there, so a straight with
+ * a corner at both ends needs twice the radius to give. The final one has a corner at one
+ * end only - the other runs into the center turn, which leaves tangentially and so costs it
+ * nothing - and needs a single radius.
+ */
+function laneTailFitsBendRadius(
+    lane: Point[],
+    length: number,
+    bendRadius: number,
+): boolean {
+    return (
+        laneSegmentLength(lane, length - 1) >= bendRadius - EPSILON &&
+        laneSegmentLength(lane, length - 2) >= 2 * bendRadius - EPSILON
+    );
+}
+
+/**
+ * How much of both lanes can be kept before the corners they end on get tighter than the
+ * pipe's bend radius.
+ *
+ * A spiral's innermost ring is whatever is left over when the winding runs out of room, so
+ * its last sides can be arbitrarily short - down to a single pitch, which folds the pipe
+ * back on itself far tighter than it bends. Giving that up costs a little coverage right at
+ * the middle, where the center turn wants the room anyway.
+ *
+ * One length covers both lanes: they are built ring for ring from the same frames, so equal
+ * lengths is what keeps point i of one the partner of point i of the other, which
+ * everything downstream (the center leg, the center turn) assumes.
+ */
+function laneLengthWithinBendRadius(
+    supply: Point[],
+    returnInward: Point[],
+    bendRadius: number,
+    maxLength: number,
+): number {
+    let length = Math.min(maxLength, supply.length, returnInward.length);
+
+    while (
+        length > 2 &&
+        (!laneTailFitsBendRadius(supply, length, bendRadius) ||
+            !laneTailFitsBendRadius(returnInward, length, bendRadius))
+    ) {
+        length--;
+    }
+
+    return length;
+}
+
+/** The first `length` points of a lane, deep enough that the copy can be reshaped freely. */
+function copyLane(lane: Point[], length: number): Point[] {
+    return lane.slice(0, length).map(point => ({ x: point.x, y: point.y }));
+}
+
+/**
+ * How far a path strays onto the wrong side of one straight run of pipe, millimetres.
+ *
+ * Only the shallower of the path's two excursions counts, and only where it is actually
+ * abreast of the run: a path that sits on one side and dips a little over is measured by
+ * that dip, while one that cuts clean through and carries on is measured by however far it
+ * got. Zero when the path keeps to one side, which is the usual answer.
+ */
+function strayDepthPastRun(path: Point[], from: Point, to: Point): number {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const runLength = Math.hypot(dx, dy);
+
+    if (runLength < EPSILON) return 0;
+
+    let deepestAbove = 0;
+    let deepestBelow = 0;
+
+    for (const point of path) {
+        const alongRun =
+            ((point.x - from.x) * dx + (point.y - from.y) * dy) / runLength;
+
+        // Past either end of the run there is nothing to be on the wrong side of.
+        if (alongRun < 0 || alongRun > runLength) continue;
+
+        const across =
+            ((point.x - from.x) * dy - (point.y - from.y) * dx) / runLength;
+
+        deepestAbove = Math.max(deepestAbove, across);
+        deepestBelow = Math.max(deepestBelow, -across);
+    }
+
+    return Math.min(deepestAbove, deepestBelow);
+}
+
+/** Distance from a point to the nearest place on a segment. */
+function pointToSegmentDistance(point: Point, from: Point, to: Point): number {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const lengthSquared = dx * dx + dy * dy;
+
+    if (lengthSquared < EPSILON) return Math.hypot(point.x - from.x, point.y - from.y);
+
+    const t = Math.max(
+        0,
+        Math.min(1, ((point.x - from.x) * dx + (point.y - from.y) * dy) / lengthSquared),
+    );
+
+    return Math.hypot(point.x - (from.x + t * dx), point.y - (from.y + t * dy));
+}
+
+/**
+ * How close a run of pipe comes to any part of a lane, skipping the last `ignoreTail`
+ * segments of it - which is how a run that is itself part of that lane excuses its own
+ * neighbours from the comparison.
+ */
+function clearanceToLane(from: Point, to: Point, lane: Point[], ignoreTail = 0): number {
+    let closest = Infinity;
+
+    for (let i = 0; i + 1 + ignoreTail < lane.length; i++) {
+        closest = Math.min(
+            closest,
+            pointToSegmentDistance(from, lane[i], lane[i + 1]),
+            pointToSegmentDistance(to, lane[i], lane[i + 1]),
+            pointToSegmentDistance(lane[i], from, to),
+            pointToSegmentDistance(lane[i + 1], from, to),
+        );
+    }
+
+    return closest;
+}
+
+/**
+ * How far past its own lanes a center turn is entitled to stray, millimetres.
+ *
+ * A half circle drawn between lanes exactly two radii apart touches each of them and stays
+ * between the two, so it is entitled to nothing. Only where the gap couldn't be opened out
+ * that far does the turn have to swing wide to hold its radius, and this is exactly how
+ * wide - a quarter of whatever the gap is still short by.
+ */
+function centerTurnStrayAllowanceMm(gapMm: number, bendRadius: number): number {
+    return Math.max(0, (2 * bendRadius - gapMm) / 4);
+}
+
+/**
+ * Whether a path cuts through pipe that is already down, rather than merely leaning over it
+ * by as much as it is entitled to.
+ */
+function pathCutsThroughLane(path: Point[], lane: Point[], allowance: number): boolean {
+    for (let i = 0; i + 1 < lane.length; i++) {
+        if (strayDepthPastRun(path, lane[i], lane[i + 1]) > allowance + EPSILON) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Whether a point lies within the zone, judged the same way the rings are clamped: by the
+ * span the polygon actually covers on that scanline. A point exactly on the outline counts
+ * as inside, so a run laid hard against a wall isn't read as having left the room.
+ */
+function isPointInsidePolygon(polygon: Polygon, point: Point): boolean {
+    return polygonRowIntervals(polygon, point.y).some(
+        ([min, max]) => point.x >= min - EPSILON && point.x <= max + EPSILON,
+    );
+}
+
 /**
  * Make the two center endpoints line up so that they can be joined by a
  * semicircle. The final supply and return segments must be parallel.
@@ -1211,15 +1431,215 @@ function alignCenterEndpoints(
 }
 
 /**
+ * Open the last two passes out to twice the bend radius, so the turn joining them can be
+ * the plain half circle it looks like it should be.
+ *
+ * Consecutive passes sit one spacing apart, and no half turn formed at `bendRadius` fits
+ * between passes closer together than twice it - under 200 mm spacing the turn would have
+ * to swing wide of both lanes to hold its radius. The room to avoid that is already there:
+ * the inner lane's last straight has nothing but the middle of the zone beyond it, so it
+ * can simply sit further in. Nothing else moves, and because the straight feeding it runs
+ * that way anyway, that straight just gets longer - every corner stays square.
+ *
+ * The cost is a slightly wider gap between the last two passes; the return is a turn a
+ * fitter can actually form, and one that reaches only its own radius past the lanes
+ * instead of twice that, which is room the spiral gets to spend on another ring.
+ */
+function widenCenterGapToBendRadius(
+    supply: Point[],
+    returnInward: Point[],
+    spacing: number,
+    bendRadius: number,
+    polygon?: Polygon,
+): void {
+    if (supply.length < 2 || returnInward.length < 3) return;
+
+    const supplyEnd = supply[supply.length - 1];
+    const returnEnd = returnInward[returnInward.length - 1];
+    const returnCorner = returnInward[returnInward.length - 2];
+    const returnFeed = returnInward[returnInward.length - 3];
+
+    const gapX = returnEnd.x - supplyEnd.x;
+    const gapY = returnEnd.y - supplyEnd.y;
+    const gap = Math.hypot(gapX, gapY);
+    const shortfall = 2 * bendRadius - gap;
+
+    if (gap < EPSILON || shortfall <= EPSILON) return;
+
+    const acrossGap = { x: gapX / gap, y: gapY / gap };
+
+    // The lane's last straight has to stay square to the gap, or moving it along the gap
+    // would change its length and throw the two lanes out of parallel.
+    const lastRun = {
+        x: returnEnd.x - returnCorner.x,
+        y: returnEnd.y - returnCorner.y,
+    };
+
+    if (Math.abs(lastRun.x * acrossGap.x + lastRun.y * acrossGap.y) > EPSILON) return;
+
+    /*
+     * The straight feeding it absorbs the move. It grows when it already runs deeper into
+     * the zone and shrinks when it doesn't - and it still has a corner at each end to carry
+     * afterwards, so a move that would leave it short is not worth making.
+     */
+    const feedRun = {
+        x: returnCorner.x - returnFeed.x,
+        y: returnCorner.y - returnFeed.y,
+    };
+
+    const feedAlongGap = feedRun.x * acrossGap.x + feedRun.y * acrossGap.y;
+
+    if (Math.abs(feedAlongGap + shortfall) < 2 * bendRadius - EPSILON) return;
+
+    const moved = [returnCorner, returnEnd].map(point => ({
+        x: point.x + acrossGap.x * shortfall,
+        y: point.y + acrossGap.y * shortfall,
+    }));
+
+    // Deeper into the zone is only empty if the zone is still there to be deeper into.
+    if (polygon && moved.some(point => !isPointInsidePolygon(polygon, point))) return;
+
+    /*
+     * And only if the middle really is empty. Where the winding stopped early the far side
+     * of the hole can be closer than the move is long, and the straight would be laid down
+     * on top of a pass that is already there. It must stay a spacing off everything, just
+     * as it did before it moved - bar its own neighbours, and the lane opposite, which it
+     * is now two radii from by construction.
+     */
+    if (
+        clearanceToLane(moved[0], moved[1], supply, 1) < spacing - EPSILON ||
+        clearanceToLane(moved[0], moved[1], returnInward, 2) < spacing - EPSILON
+    ) {
+        return;
+    }
+
+    returnCorner.x = moved[0].x;
+    returnCorner.y = moved[0].y;
+    returnEnd.x = moved[1].x;
+    returnEnd.y = moved[1].y;
+}
+
+/** Angular resolution the center turn's arcs are drawn at. */
+const CENTER_TURN_STEP_RADIANS = Math.PI / 12;
+
+function arcStepCount(sweep: number): number {
+    return Math.max(2, Math.ceil(Math.abs(sweep) / CENTER_TURN_STEP_RADIANS));
+}
+
+/**
+ * How far the initial swing of a looping center turn goes the "wrong" way, radians.
+ *
+ * A turn made of a single arc joins two lanes exactly 2 × radius apart. To finish on a lane
+ * that is closer than that, the pipe first swings out by this angle away from the far lane,
+ * then comes back through 90 + this angle — the extra swing is what buys back the distance.
+ * Solving the closing condition for the pair gives cos(swing) = (2r + gap) / 4r, which is 0
+ * at the widest gap the loop is ever used for and grows as the lanes close up.
+ */
+function loopTurnSwing(gapMm: number, radiusMm: number): number {
+    const cosSwing = (2 * radiusMm + gapMm) / (4 * radiusMm);
+    return Math.acos(Math.max(-1, Math.min(1, cosSwing)));
+}
+
+/**
+ * The center turn for lanes that couldn't be opened out to 2 × radius: the pipe swings wide
+ * of its own lane, comes back round through more than a half turn, and drops into the
+ * return lane — every part of it formed at `radius`, where a semicircle across the same gap
+ * would have to be formed at half the gap.
+ *
+ * `widenCenterGapToBendRadius` spares the spiral this in all but the tightest middles, and
+ * it is much the better turn when it can: one continuous sweep rather than a swing out and
+ * back, and it reaches only its own radius past the lanes instead of twice that.
+ *
+ * Built in the turn's own frame (`u` along the pipe's travel, `v` across to the return
+ * lane) and mapped back at the end, so it needs no case analysis per orientation. The
+ * second half is the first mirrored about the gap's midline, which is what makes the two
+ * halves meet tangentially at the far extremity.
+ */
+function generateCenterLoopTurn(
+    supplyEnd: Point,
+    forward: Point,
+    returnEnd: Point,
+    gap: number,
+    radius: number,
+): Point[] {
+    const across = {
+        x: (returnEnd.x - supplyEnd.x) / gap,
+        y: (returnEnd.y - supplyEnd.y) / gap,
+    };
+
+    // Square the travel direction up against the gap, so the loop starts exactly tangent to
+    // the lane even if the incoming segment is a hair off perpendicular.
+    const alongDot = forward.x * across.x + forward.y * across.y;
+    const alongRaw = {
+        x: forward.x - across.x * alongDot,
+        y: forward.y - across.y * alongDot,
+    };
+    const alongLength = Math.hypot(alongRaw.x, alongRaw.y);
+
+    // The lane runs straight at the return lane rather than alongside it: no loop to build.
+    if (alongLength < EPSILON) return [];
+
+    const along = {
+        x: alongRaw.x / alongLength,
+        y: alongRaw.y / alongLength,
+    };
+
+    const swing = loopTurnSwing(gap, radius);
+
+    // Swing away from the return lane, hinged on the near side of the lane.
+    const outward = arcPts(
+        0,
+        -radius,
+        radius,
+        Math.PI / 2,
+        Math.PI / 2 - swing,
+        arcStepCount(swing),
+    );
+
+    // Then back the other way, through 90 + swing, to reach the extremity of the loop
+    // travelling straight across the gap.
+    const around = arcPts(
+        2 * radius * Math.sin(swing),
+        radius * (2 * Math.cos(swing) - 1),
+        radius,
+        (3 * Math.PI) / 2 - swing,
+        2 * Math.PI,
+        arcStepCount(Math.PI / 2 + swing),
+    );
+
+    const half = [...outward, ...around.slice(1)];
+
+    // Mirroring the half about the gap's midline turns it into the run back down into the
+    // return lane; the extremity itself sits on that line and is already in `half`.
+    const full = [
+        ...half,
+        ...half
+            .slice(0, -1)
+            .reverse()
+            .map(point => ({ x: point.x, y: gap - point.y })),
+    ];
+
+    return full.map(point => ({
+        x: supplyEnd.x + along.x * point.x + across.x * point.y,
+        y: supplyEnd.y + along.y * point.x + across.y * point.y,
+    }));
+}
+
+/**
  * Generate the 180-degree center turn.
  *
  * The bulge is chosen in the direction in which the supply lane enters the
  * center, so the pipe turns naturally onto the reversed return spiral.
+ *
+ * The two lane ends are one pipe spacing apart, so the semicircle joining them has a radius
+ * of half that spacing — under 2 × PIPE_BEND_RADIUS_MM of spacing that is tighter than the
+ * pipe bends, and the turn is made as a wider loop instead.
  */
 function generateCenterTurn(
     supplyPrevious: Point,
     supplyEnd: Point,
     returnEnd: Point,
+    minRadius = 0,
     steps = 8,
 ): Point[] {
     const dx = returnEnd.x - supplyEnd.x;
@@ -1248,6 +1668,18 @@ function generateCenterTurn(
 
     tangent.x /= tangentLength;
     tangent.y /= tangentLength;
+
+    if (minRadius > radius + EPSILON) {
+        const loop = generateCenterLoopTurn(
+            supplyEnd,
+            tangent,
+            returnEnd,
+            distance,
+            minRadius,
+        );
+
+        if (loop.length > 0) return loop;
+    }
 
     const startAngle = Math.atan2(
         supplyEnd.y - center.y,
@@ -1306,6 +1738,8 @@ function generateCanonicalSpiral(
     spacing: number,
     polygon?: Polygon,
 ): PipePath {
+    const bendRadius = spiralBendRadiusMm(spacing);
+
     const boundaryFollowing = polygon
         ? computeBoundaryFollowingSpiral(polygon, spacing, height)
         : null;
@@ -1353,20 +1787,73 @@ function generateCanonicalSpiral(
     /*
      * Keep corresponding portions of both spirals. Depending on the rectangle's
      * proportions, one offset spiral can otherwise contain one extra center
-     * segment.
+     * segment. Pulling both back to the same length is also what keeps them
+     * corresponding ring for ring, which the center turn relies on.
      */
-    const sharedLength = Math.min(
-        supply.length,
-        returnInward.length,
+    let length = laneLengthWithinBendRadius(
+        supply,
+        returnInward,
+        bendRadius,
+        Math.min(supply.length, returnInward.length),
     );
 
-    supply.length = sharedLength;
-    returnInward.length = sharedLength;
+    /*
+     * The center turn needs clear floor ahead of where the lanes stop, and how much is
+     * only known once they have stopped. Give up a ring at a time until it fits: what a
+     * lane gives up is exactly the floor the turn was short of.
+     *
+     * A turn that only overshoots the zone's outline is kept in reserve rather than
+     * refused. Rings run out long before the search does in a zone this tight, and a
+     * spiral whose middle nudges past the wall is worth more to whoever has to lay it than
+     * no spiral at all. Pipe laid across pipe is not, so that one is never kept.
+     */
+    let overshooting: PipePath | null = null;
 
+    while (length >= 4) {
+        const joined = joinLanesAtCenter(
+            copyLane(supply, length),
+            copyLane(returnInward, length),
+            spacing,
+            bendRadius,
+            polygon,
+        );
+
+        if (joined?.insideZone) return joined.path;
+        if (joined && !overshooting) overshooting = joined.path;
+
+        length = laneLengthWithinBendRadius(
+            supply,
+            returnInward,
+            bendRadius,
+            length - 1,
+        );
+    }
+
+    return overshooting ?? [];
+}
+
+/**
+ * Close the two lanes off against each other at the middle of the spiral: a last pair of
+ * center legs where there is room for them, the turn that joins the lanes, and the whole
+ * thing assembled into the single path the pipe actually follows.
+ *
+ * `insideZone` reports whether the center turn stayed within the zone's outline - the
+ * caller's cue to stop the lanes further out and try again. Returns null outright when the
+ * turn would be laid across pipe that is already down, which no amount of keeping is worth.
+ * The lanes are consumed (mutated) either way.
+ */
+function joinLanesAtCenter(
+    supply: Point[],
+    returnInward: Point[],
+    spacing: number,
+    bendRadius: number,
+    polygon?: Polygon,
+): { path: PipePath; insideZone: boolean } | null {
     const addedCenterLeg = addFinalCenterLeg(
         supply,
         returnInward,
         spacing,
+        bendRadius,
         polygon,
     );
     /*
@@ -1410,16 +1897,19 @@ function generateCanonicalSpiral(
         alignCenterEndpoints(supply, returnInward);
     }
     if (supply.length < 2 || returnInward.length < 2) {
-        return [];
+        return null;
     }
+
+    widenCenterGapToBendRadius(supply, returnInward, spacing, bendRadius, polygon);
+
     const roundedSupply = roundPathCorners(
         supply,
-        spacing / 2,
+        bendRadius,
     );
 
     const roundedReturnInward = roundPathCorners(
         returnInward,
-        spacing / 2,
+        bendRadius,
     );
 
     const supplyEnd =
@@ -1435,7 +1925,30 @@ function generateCanonicalSpiral(
         supplyPrevious,
         supplyEnd,
         returnEnd,
+        bendRadius,
     );
+
+    /*
+     * The turn is the one part of the spiral not laid out against the zone's outline - it
+     * swings clear of the lanes to hold its radius, and nothing so far has checked where
+     * that swing lands. It has to end up inside the zone and clear of the pipe already in
+     * the ground; where it doesn't, the caller stops the lanes further out and the swing
+     * gets the floor those rings were using.
+     */
+    const strayAllowance = centerTurnStrayAllowanceMm(
+        Math.hypot(returnEnd.x - supplyEnd.x, returnEnd.y - supplyEnd.y),
+        bendRadius,
+    );
+
+    if (
+        pathCutsThroughLane(centerTurn, roundedSupply, strayAllowance) ||
+        pathCutsThroughLane(centerTurn, roundedReturnInward, strayAllowance)
+    ) {
+        return null;
+    }
+
+    const insideZone =
+        !polygon || centerTurn.every(point => isPointInsidePolygon(polygon, point));
 
     const path: Point[] = [...roundedSupply];
 
@@ -1452,7 +1965,7 @@ function generateCanonicalSpiral(
         pushUnique(path, roundedReturnInward[i]);
     }
 
-    return path;
+    return { path, insideZone };
 }
 
 /**
@@ -1599,7 +2112,9 @@ function getClosestManifoldSide(
  * per row/column, never by cutting a run at an angle. Known limitations:
  * - the short stub connecting the outermost ring to the manifold edge is
  *   not clamped, since it's assumed to sit on the polygon boundary already;
- * - the semicircular center turn is not clamped against the polygon;
+ * - the center turn is checked against the polygon rather than clamped to it: where it
+ *   won't fit the spiral stops winding sooner, and only if no amount of that helps is a
+ *   turn that overshoots the outline drawn anyway;
  * - `paddingMm` insets the bounding rectangle but does not inset the
  *   polygon's own (possibly concave) edges;
  * - where a single scanline crosses the polygon in more than one place

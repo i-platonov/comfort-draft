@@ -10,10 +10,16 @@
  * five times the outside diameter (~80 mm), so this leaves a little margin and is the
  * radius a fitter would actually form by hand.
  *
- * This governs the free-standing 90° bends in a leader run. It deliberately does **not**
- * govern the spiral's own turns: consecutive passes sit one pipe spacing apart, so the
- * 180° turn between them has to have a radius of half that spacing — any more and the
- * turn would swing into the neighbouring pass. That one is a geometric consequence, not
- * a preference, which is why it stays tied to the zone's spacing.
+ * It is a floor on every bend drawn, in a leader run and in a spiral alike, because it is
+ * a property of the pipe rather than of the drawing. A spiral would rather form its corners
+ * at half the pipe spacing, which keeps consecutive passes concentric through a corner, and
+ * does so wherever that is the wider of the two.
+ *
+ * The 180° turn at the middle of a spiral is where this bites. No half-turn formed at this
+ * radius fits between lanes closer together than twice it, and consecutive passes sit one
+ * spacing apart — so under 200 mm spacing the last two passes are opened out until they are
+ * twice this radius apart, and the turn stays the plain half circle it should be. The
+ * middle of a zone is empty, which is where that room comes from; the only cost is a
+ * slightly wider gap between the last two passes.
  */
 export const PIPE_BEND_RADIUS_MM = 100;

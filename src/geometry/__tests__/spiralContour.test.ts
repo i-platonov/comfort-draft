@@ -82,19 +82,19 @@ describe('generateSerpentine – non-rectangular zones (contour parallel)', () =
     const rect: Polygon = {
       points: [
         { x: 0, y: 0 },
-        { x: 400, y: 0 },
-        { x: 400, y: 300 },
-        { x: 0, y: 300 },
+        { x: 4000, y: 0 },
+        { x: 4000, y: 3000 },
+        { x: 0, y: 3000 },
       ],
     };
-    const path = generateSerpentine(rect, 50, { x: 200, y: 1e9 });
+    const path = generateSerpentine(rect, 150, { x: 2000, y: 1e9 });
     expect(path.length).toBeGreaterThan(4);
 
     // Rectangular counter-flow spiral keeps both ends near the manifold edge.
     const start = path[0];
     const end = path[path.length - 1];
-    expect(start.y).toBeGreaterThan(200);
-    expect(end.y).toBeGreaterThan(150);
+    expect(start.y).toBeGreaterThan(2000);
+    expect(end.y).toBeGreaterThan(1500);
   });
 });
 

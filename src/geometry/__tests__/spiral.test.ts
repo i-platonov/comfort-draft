@@ -101,18 +101,18 @@ describe('generateSerpentine – both endpoints near manifold edge', () => {
 
 describe('generateSerpentine – path quality', () => {
   it('generates a longer path for smaller spacing (same zone)', () => {
-    const loose = generateSerpentine(rect(400, 400), 80);
-    const tight = generateSerpentine(rect(400, 400), 40);
+    const loose = generateSerpentine(rect(4000, 4000), 300);
+    const tight = generateSerpentine(rect(4000, 4000), 150);
     expect(pathLengthMm(tight)).toBeGreaterThan(pathLengthMm(loose));
   });
 
-  it('path length for 200×200 zone at 20 px spacing is within expected bounds', () => {
-    // ~10 passes × 200 px each ≈ 2000 px + arc overhead
-    const path = generateSerpentine(rect(200, 200), 20);
+  it('path length for a 2 × 2 m zone at 200 mm spacing is within expected bounds', () => {
+    // ~10 passes × 2000 mm each ≈ 20 m + arc overhead
+    const path = generateSerpentine(rect(2000, 2000), 200);
     const len = pathLengthMm(path);
-    // At least as long as 5 × 200 (conservative) and not more than 50 × 200 (very loose upper)
-    expect(len).toBeGreaterThan(5 * 200);
-    expect(len).toBeLessThan(50 * 200);
+    // At least as long as 5 × 2000 (conservative) and not more than 50 × 2000 (very loose upper)
+    expect(len).toBeGreaterThan(5 * 2000);
+    expect(len).toBeLessThan(50 * 2000);
   });
 });
 
