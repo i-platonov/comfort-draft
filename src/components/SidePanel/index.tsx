@@ -242,7 +242,7 @@ export default function SidePanel() {
                         <button className="btn" onClick={() => fileInputRef.current?.click()}>
                             {background ? '🔄 Re-import DXF or Image' : '📁 Import DXF or Image'}
                         </button>
-                        <p className="info" style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                        <p className="info" style={{ fontSize: '0.75rem' }}>
                             Accepts: DXF, PNG, JPG, WEBP, GIF
                         </p>
                         {importError && <p className="error">{importError}</p>}

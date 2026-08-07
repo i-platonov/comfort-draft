@@ -4,17 +4,38 @@
   padding: 0;
 }
 
+/*
+ * Light theme, built on Tailwind's slate/blue palette. Canvas-side equivalents live in
+ * src/theme.ts — Konva paints to a canvas element and can't read these, so the two files
+ * are kept in step by hand.
+ */
 :root {
-  --bg: #0f0f1a;
-  --panel-bg: #16213e;
-  --panel-border: #1e3a5f;
-  --text: #e2e8f0;
-  --text-muted: #94a3b8;
-  --accent: #4a9eff;
-  --accent-hover: #6ab4ff;
-  --danger: #e74c3c;
-  --success: #2ecc71;
-  --warning: #f39c12;
+  color-scheme: light;
+
+  /* Surfaces, lightest to most recessed */
+  --bg: #f1f5f9; /* slate-100 */
+  --surface: #ffffff;
+  --surface-sunken: #f8fafc; /* slate-50 — inputs, headers, read-only blocks */
+  --border: #e2e8f0; /* slate-200 */
+  --border-strong: #cbd5e1; /* slate-300 */
+
+  --text: #0f172a; /* slate-900 */
+  --text-muted: #64748b; /* slate-500 */
+  --text-inverse: #ffffff;
+
+  --accent: #2563eb; /* blue-600 */
+  --accent-hover: #1d4ed8; /* blue-700 */
+  --accent-soft: #eff6ff; /* blue-50 — selected rows, tinted fills */
+
+  --danger: #dc2626; /* red-600 */
+  --danger-soft: #fef2f2; /* red-50 */
+  --success: #059669; /* emerald-600 */
+  --warning: #d97706; /* amber-600 */
+
+  /* Light UIs need elevation to read; borders alone go flat. */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.1);
+  --hover-tint: rgba(15, 23, 42, 0.05);
 }
 
 body {
@@ -23,6 +44,7 @@ body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 13px;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
 button,
@@ -41,8 +63,8 @@ input {
   width: 320px;
   min-width: 320px;
   height: 100vh;
-  background: var(--panel-bg);
-  border-right: 1px solid var(--panel-border);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -55,18 +77,18 @@ input {
 }
 
 .side-panel::-webkit-scrollbar-track {
-  background: var(--panel-bg);
+  background: var(--surface);
 }
 
 .side-panel::-webkit-scrollbar-thumb {
-  background: var(--panel-border);
+  background: var(--border-strong);
   border-radius: 3px;
 }
 
 .panel-header {
   padding: 16px;
-  border-bottom: 1px solid var(--panel-border);
-  background: #0d1b33;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
 }
 
 .panel-header h1 {
@@ -77,8 +99,8 @@ input {
 
 .side-panel-tabs {
   display: flex;
-  border-bottom: 1px solid var(--panel-border);
-  background: #0d1b33;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
 }
 
 .side-panel-tab {
@@ -101,6 +123,7 @@ input {
 .side-panel-tab.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
+  background: var(--surface);
 }
 
 .side-panel-tab-content {
@@ -110,7 +133,7 @@ input {
 
 .panel-section {
   padding: 14px 16px;
-  border-bottom: 1px solid var(--panel-border);
+  border-bottom: 1px solid var(--border);
 }
 
 .panel-section h2 {
@@ -137,8 +160,8 @@ input {
   height: 44px;
   min-height: 44px;
   padding: 0 16px;
-  background: var(--panel-bg);
-  border-bottom: 1px solid var(--panel-border);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
   overflow-x: auto;
 }
 
@@ -168,38 +191,52 @@ input {
   align-items: center;
   gap: 6px;
   padding: 7px 12px;
-  border: 1px solid var(--panel-border);
-  background: #1e3a5f;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
   color: var(--text);
   border-radius: 6px;
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
+  box-shadow: var(--shadow-sm);
   transition: all 0.15s;
   white-space: nowrap;
 }
 
 .btn:hover {
-  background: #2a4e7a;
+  background: var(--surface-sunken);
   border-color: var(--accent);
+  color: var(--accent);
 }
 
 .btn.active {
   background: var(--accent);
-  color: #0f0f1a;
+  color: var(--text-inverse);
   border-color: var(--accent);
+}
+
+.btn.active:hover {
+  background: var(--accent-hover);
+  color: var(--text-inverse);
 }
 
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #0f0f1a;
+  color: var(--text-inverse);
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: var(--text-inverse);
 }
 
 .btn-secondary {
   background: transparent;
-  border-color: var(--text-muted);
+  border-color: var(--border-strong);
   color: var(--text-muted);
+  box-shadow: none;
 }
 
 .btn-icon {
@@ -213,11 +250,11 @@ input {
 }
 
 .btn-icon:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--hover-tint);
 }
 
 .btn-danger:hover {
-  background: rgba(231, 76, 60, 0.2);
+  background: var(--danger-soft);
 }
 
 .top-toolbar-tools {
@@ -233,8 +270,8 @@ input {
 
 .btn-preset {
   padding: 3px 7px;
-  border: 1px solid var(--panel-border);
-  background: transparent;
+  border: 1px solid var(--border);
+  background: var(--surface);
   color: var(--text-muted);
   border-radius: 4px;
   cursor: pointer;
@@ -244,12 +281,12 @@ input {
 
 .btn-preset:hover {
   border-color: var(--accent);
-  color: var(--text);
+  color: var(--accent);
 }
 
 .btn-preset.active {
   background: var(--accent);
-  color: #0f0f1a;
+  color: var(--text-inverse);
   border-color: var(--accent);
 }
 
@@ -287,11 +324,20 @@ input {
 .spacing-input {
   width: 65px;
   padding: 4px 6px;
-  background: #0f1a2e;
-  border: 1px solid var(--panel-border);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-strong);
   color: var(--text);
   border-radius: 4px;
   font-size: 12px;
+}
+
+.setting-row input:focus,
+.spacing-input:focus,
+.calibration-input input:focus,
+.zone-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .setting-row span,
@@ -337,8 +383,8 @@ input {
 .calibration-input input {
   width: 80px;
   padding: 5px 8px;
-  background: #0f1a2e;
-  border: 1px solid var(--panel-border);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-strong);
   color: var(--text);
   border-radius: 4px;
   font-size: 12px;
@@ -352,7 +398,7 @@ input {
 .zone-count {
   display: inline-block;
   background: var(--accent);
-  color: #0f0f1a;
+  color: var(--text-inverse);
   border-radius: 10px;
   padding: 1px 7px;
   font-size: 10px;
@@ -370,17 +416,24 @@ input {
 }
 
 .zone-card {
-  background: #0f1a2e;
-  border: 1px solid var(--panel-border);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-left: 4px solid var(--accent);
   border-radius: 6px;
   padding: 8px 10px;
   cursor: pointer;
-  transition: border-color 0.15s;
+  box-shadow: var(--shadow-sm);
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.zone-card:hover {
+  border-color: var(--border-strong);
 }
 
 .zone-card.selected {
-  background: #1a2f52;
+  background: var(--accent-soft);
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
@@ -398,7 +451,7 @@ input {
 }
 
 .zone-name-input {
-  background: #0f1a2e;
+  background: var(--surface);
   border: 1px solid var(--accent);
   color: var(--text);
   border-radius: 4px;
@@ -452,8 +505,8 @@ input {
 .editable-select input {
   width: 52px;
   padding: 3px 4px;
-  background: #0f1a2e;
-  border: 1px solid var(--panel-border);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-strong);
   border-right: none;
   border-radius: 4px 0 0 4px;
   color: var(--text);
@@ -467,9 +520,9 @@ input {
 
 .editable-select-toggle {
   padding: 0 5px;
-  background: #0f1a2e;
-  border: 1px solid var(--panel-border);
-  border-left: 1px solid var(--panel-border);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-strong);
+  border-left: 1px solid var(--border-strong);
   border-radius: 0 4px 4px 0;
   color: var(--text-muted);
   font-size: 9px;
@@ -478,7 +531,7 @@ input {
 }
 
 .editable-select-toggle:hover {
-  color: var(--text);
+  color: var(--accent);
   border-color: var(--accent);
 }
 
@@ -490,10 +543,10 @@ input {
   display: flex;
   flex-direction: column;
   min-width: 100%;
-  background: #16213e;
-  border: 1px solid var(--panel-border);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-md);
   overflow: hidden;
 }
 
@@ -509,7 +562,7 @@ input {
 }
 
 .editable-select-option:hover {
-  background: #1e3a5f;
+  background: var(--surface-sunken);
 }
 
 .editable-select-option.active {
@@ -520,8 +573,8 @@ input {
 .zone-select {
   flex: 1;
   padding: 3px 4px;
-  background: #0f1a2e;
-  border: 1px solid var(--panel-border);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-strong);
   color: var(--text);
   border-radius: 4px;
   font-size: 11px;
@@ -529,15 +582,16 @@ input {
 
 .zone-lengths {
   font-size: 11px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
   border-radius: 4px;
   padding: 5px 7px;
   margin-top: 6px;
 }
 
 .zone-lengths.over-limit {
-  background: rgba(231, 76, 60, 0.1);
-  border: 1px solid rgba(231, 76, 60, 0.3);
+  background: var(--danger-soft);
+  border-color: var(--danger);
 }
 
 .length-row {
@@ -550,7 +604,7 @@ input {
 .length-row.total {
   color: var(--text);
   font-weight: 600;
-  border-top: 1px solid var(--panel-border);
+  border-top: 1px solid var(--border);
   margin-top: 3px;
   padding-top: 3px;
 }
@@ -564,10 +618,11 @@ input {
 .grand-total {
   margin-top: 12px;
   padding: 10px;
-  background: #0f1a2e;
-  border: 1px solid var(--panel-border);
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
   border-radius: 6px;
   text-align: center;
   font-size: 13px;
+  font-weight: 600;
   color: var(--accent);
 }

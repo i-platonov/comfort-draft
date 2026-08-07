@@ -3,13 +3,13 @@ import Konva from 'konva';
 import { Circle, Layer, Line } from 'react-konva';
 import { Point, Manifold, Zone } from '../../types';
 import { useStore } from '../../state/store';
-import { clampPointToManifoldEdge } from '../../geometry/manifoldRouting';
+import { clampPointToManifoldEdge, getManifoldLinePitchPx } from '../../geometry/manifoldRouting';
 import {
   DRAG_ALIGN_TOLERANCE_PX,
-  LEADER_DOUBLE_LINE_HALF_GAP_PX,
+  buildLeaderRenderLines,
   buildManualLeaderPaths,
-  offsetPolyline,
 } from '../../geometry/manualRouting';
+import { canvas } from '../../theme';
 
 interface Props {
   zones: Zone[];
@@ -20,21 +20,10 @@ interface Props {
 const toFlatPoints = (points: Point[]) => points.flatMap((point) => [point.x, point.y]);
 
 const SEGMENT_HIT_WIDTH = 14;
-const MANIFOLD_CAP_HALF_WIDTH = LEADER_DOUBLE_LINE_HALF_GAP_PX + 3;
-const PORT_DOT_RADIUS = 5;
-
-/**
- * Short cap across the doubled line where it meets the manifold, like a pipe fitting.
- * Square to the arriving pipe whatever its angle, since the approach may run diagonally.
- */
-function manifoldCapPoints(beforeTarget: Point, target: Point): number[] {
-  const dx = target.x - beforeTarget.x;
-  const dy = target.y - beforeTarget.y;
-  const len = Math.hypot(dx, dy) || 1;
-  const capX = (-dy / len) * MANIFOLD_CAP_HALF_WIDTH;
-  const capY = (dx / len) * MANIFOLD_CAP_HALF_WIDTH;
-  return [target.x - capX, target.y - capY, target.x + capX, target.y + capY];
-}
+/** The port dot is drawn at true size — one 2.5 cm line pitch across — so it needs its own generous hit area. */
+const PORT_DOT_HIT_WIDTH = 18;
+/** Zoomed far out, true size rounds away to nothing; keep the dot just visible. */
+const PORT_DOT_MIN_RADIUS_PX = 1;
 
 function setCursor(event: Konva.KonvaEventObject<Event>, cursor: string) {
   const stage = event.target.getStage();
@@ -61,10 +50,12 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
   if (!manifold) return <Layer />;
 
   const editable = toolMode === 'routeLeader';
+  // Drawn at the size of the thing it represents: one 2.5 cm line pitch across.
+  const portDotRadius = Math.max(PORT_DOT_MIN_RADIUS_PX, getManifoldLinePitchPx(pixelsPerMeter) / 2);
 
   return (
     <Layer>
-      {paths.map(({ zoneId, leaderPath }) => {
+      {paths.map(({ zoneId, leaderPath, ports }) => {
         const zone = zones.find((candidate) => candidate.id === zoneId);
         if (!zone || !leaderPath || !zone.leaderWaypoints) return null;
 
@@ -72,8 +63,10 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
         // approach into the manifold, which the user steers via the port dot instead.
         const waypoints = zone.leaderWaypoints;
         const approachIsDirect = leaderPath.length === waypoints.length + 2;
-        const lineA = offsetPolyline(leaderPath, LEADER_DOUBLE_LINE_HALF_GAP_PX);
-        const lineB = offsetPolyline(leaderPath, -LEADER_DOUBLE_LINE_HALF_GAP_PX);
+        // Bends match the zone's own pipe: the spiral fillets its corners at half the
+        // pipe spacing, and a leader is the same pipe on the same floor.
+        const bendRadiusPx = ((zone.spacingMm / 1000) * pixelsPerMeter) / 2;
+        const { lineA, lineB } = buildLeaderRenderLines(leaderPath, ports, bendRadiusPx);
 
         return (
           <Fragment key={zoneId}>
@@ -91,15 +84,6 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
               opacity={0.5}
               listening={false}
             />
-            {leaderPath.length >= 2 && (
-              <Line
-                points={manifoldCapPoints(leaderPath[leaderPath.length - 2], leaderPath[leaderPath.length - 1])}
-                stroke={zone.color}
-                strokeWidth={3}
-                listening={false}
-              />
-            )}
-
             {editable &&
               waypoints.map((point, index) => {
                 if (index === waypoints.length - 1) return null;
@@ -216,7 +200,7 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
                   y={point.y}
                   radius={5}
                   fill={zone.color}
-                  stroke="#0f0f1a"
+                  stroke={canvas.stubOutline}
                   strokeWidth={1.5}
                   draggable
                   onClick={(event) => {
@@ -262,10 +246,11 @@ function LeaderLayer({ zones, manifold, pixelsPerMeter }: Props) {
                     key="manifold-port"
                     x={port.x}
                     y={port.y}
-                    radius={PORT_DOT_RADIUS}
+                    radius={portDotRadius}
                     fill={zone.color}
-                    stroke={editable ? '#f8fafc' : '#0f0f1a'}
-                    strokeWidth={1.5}
+                    stroke={editable ? canvas.portDotRing : undefined}
+                    strokeWidth={editable ? 1 : 0}
+                    hitStrokeWidth={PORT_DOT_HIT_WIDTH}
                     listening={editable}
                     draggable={editable}
                     onMouseEnter={(event) => setCursor(event, 'grab')}

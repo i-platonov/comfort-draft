@@ -5,6 +5,7 @@ import { Point, ToolMode, Zone } from '../../types';
 import { useStore } from '../../state/store';
 import { getSpiralStubs } from '../../geometry/spiral';
 import { isAxisAlignedRect, resizeRectFromCorner } from '../../geometry/rect';
+import { canvas, palette } from '../../theme';
 
 const SELECTED_DASH = [6, 6];
 const DASH_PERIOD = SELECTED_DASH.reduce((sum, value) => sum + value, 0);
@@ -75,7 +76,7 @@ function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
         const displayPoints =
           dragPreview && dragPreview.zoneId === zone.id ? dragPreview.points : zone.polygon.points;
         const points = displayPoints.flatMap((point) => [point.x, point.y]);
-        const zoneBorderColor = mixHexColors(zone.color, '#000000', 0.18);
+        const zoneBorderColor = mixHexColors(zone.color, palette.slate900, 0.18);
 
         return (
           <Group key={zone.id}>
@@ -117,7 +118,7 @@ function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
                   ref={selectedLineRefWhite}
                   points={points}
                   closed
-                  stroke="#ffffff"
+                  stroke={canvas.selectionDashAlt}
                   strokeWidth={2.5}
                   dash={SELECTED_DASH}
                   listening={false}
@@ -126,7 +127,7 @@ function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
                   ref={selectedLineRefBlack}
                   points={points}
                   closed
-                  stroke="#000000"
+                  stroke={canvas.selectionDash}
                   strokeWidth={2.5}
                   dash={SELECTED_DASH}
                   listening={false}
@@ -156,8 +157,8 @@ function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
                       x={stubs.start.x}
                       y={stubs.start.y}
                       radius={4}
-                      fill={zone.leaderWaypoints ? '#2ecc71' : '#f39c12'}
-                      stroke="#0f0f1a"
+                      fill={zone.leaderWaypoints ? canvas.stubRouted : canvas.stubUnrouted}
+                      stroke={canvas.stubOutline}
                       strokeWidth={1}
                       listening={false}
                     />
@@ -165,8 +166,8 @@ function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
                       x={stubs.end.x}
                       y={stubs.end.y}
                       radius={4}
-                      fill={zone.leaderWaypoints ? '#2ecc71' : '#f39c12'}
-                      stroke="#0f0f1a"
+                      fill={zone.leaderWaypoints ? canvas.stubRouted : canvas.stubUnrouted}
+                      stroke={canvas.stubOutline}
                       strokeWidth={1}
                       listening={false}
                     />
@@ -182,7 +183,7 @@ function ZoneLayer({ zones, selectedZoneId, toolMode }: Props) {
                   x={point.x}
                   y={point.y}
                   radius={6}
-                  fill="white"
+                  fill={canvas.vertexFill}
                   stroke={zoneBorderColor}
                   strokeWidth={2}
                   draggable

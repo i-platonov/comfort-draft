@@ -1,7 +1,7 @@
 import { Manifold, Point, Zone } from '../types';
-import { getSpiralStubs } from './spiral';
+import { getSpiralStubs, roundPathCorners } from './spiral';
 import { distancePx } from './length';
-import { ManifoldLayout, getZoneManifoldPorts } from './manifoldRouting';
+import { ManifoldLayout, ZoneManifoldPorts, getZoneManifoldPorts } from './manifoldRouting';
 
 const EPSILON = 1e-6;
 
@@ -384,6 +384,65 @@ export function computeLeaderPreviewPath(spiral: Point[], elbows: Point[]): Poin
 export interface ManualLeaderPaths {
   zoneId: string;
   leaderPath: Point[] | null;
+  ports: ZoneManifoldPorts;
+}
+
+/**
+ * Move an offset copy's final point onto whichever port sits on its own side of the
+ * centreline, so the pair converges from the drawing gap to the manifold's real line
+ * pitch across the last segment instead of arriving parallel and too wide.
+ */
+function landOnPort(
+  offsetLine: Point[],
+  path: Point[],
+  ports: ZoneManifoldPorts,
+  signedGap: number,
+): Point[] {
+  if (path.length < 2) return offsetLine;
+
+  const target = path[path.length - 1];
+  const normal = rotate90CW(unitDelta(path[path.length - 2], target));
+  const sideOf = (port: Point) =>
+    (port.x - target.x) * normal.x + (port.y - target.y) * normal.y;
+  const port = sideOf(ports.supplyPort) * signedGap >= 0 ? ports.supplyPort : ports.returnPort;
+
+  return [...offsetLine.slice(0, -1), port];
+}
+
+export interface LeaderRenderLines {
+  lineA: Point[];
+  lineB: Point[];
+}
+
+/**
+ * The two lines drawn for a leader — purely a rendering concern, the routed length is
+ * measured off the centreline. Corners are filleted at `bendRadiusPx` (a real pipe can't
+ * turn square), the pair is drawn a fixed gap either side of the centreline so it reads as
+ * supply plus return at any zoom, and the final run lands on the zone's actual ports.
+ */
+export function buildLeaderRenderLines(
+  leaderPath: Point[],
+  ports: ZoneManifoldPorts,
+  bendRadiusPx: number,
+): LeaderRenderLines {
+  // An inner line offset by more than the fillet radius would turn itself inside out.
+  const radiusPx = Math.max(bendRadiusPx, LEADER_DOUBLE_LINE_HALF_GAP_PX * 2);
+  const rounded = roundPathCorners(leaderPath, radiusPx);
+
+  return {
+    lineA: landOnPort(
+      offsetPolyline(rounded, LEADER_DOUBLE_LINE_HALF_GAP_PX),
+      rounded,
+      ports,
+      LEADER_DOUBLE_LINE_HALF_GAP_PX,
+    ),
+    lineB: landOnPort(
+      offsetPolyline(rounded, -LEADER_DOUBLE_LINE_HALF_GAP_PX),
+      rounded,
+      ports,
+      -LEADER_DOUBLE_LINE_HALF_GAP_PX,
+    ),
+  };
 }
 
 /**
@@ -408,6 +467,7 @@ export function buildManualLeaderPaths(
 
     results.push({
       zoneId: zone.id,
+      ports: pair,
       leaderPath: zone.leaderWaypoints
         ? assembleLeaderPath(
             midpoint(stubs.start, stubs.end),

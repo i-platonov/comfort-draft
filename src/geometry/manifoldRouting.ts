@@ -42,15 +42,25 @@ function getManifoldZonePitchPx(pixelsPerMeter: number): number {
 }
 
 /**
- * `pairGapPx` separates a single zone's supply and return ports; it is half the
- * zone pitch, so every line — within a pair or across neighbouring zones — sits
- * one half-pitch (2.5 cm) from the next. `pitchPx` is the per-zone width, used
- * only to size the manifold by zone count — connections themselves aren't
- * confined to a grid and can be freely slid anywhere along the length.
+ * Spacing between neighbouring pipe lines at the manifold — half a zone's 5 cm pitch, so
+ * every line sits 2.5 cm from the next whether they're a zone's own supply/return pair or
+ * the ports of adjacent zones.
+ */
+export function getManifoldLinePitchPx(pixelsPerMeter: number): number {
+  return getManifoldZonePitchPx(pixelsPerMeter) / 2;
+}
+
+/**
+ * `pairGapPx` separates a single zone's supply and return ports — one line pitch.
+ * `pitchPx` is the per-zone width, used only to size the manifold by zone count —
+ * connections themselves aren't confined to a grid and can be freely slid anywhere
+ * along the length.
  */
 function getManifoldSpacing(pixelsPerMeter: number): { pitchPx: number; pairGapPx: number } {
-  const pitchPx = getManifoldZonePitchPx(pixelsPerMeter);
-  return { pitchPx, pairGapPx: pitchPx / 2 };
+  return {
+    pitchPx: getManifoldZonePitchPx(pixelsPerMeter),
+    pairGapPx: getManifoldLinePitchPx(pixelsPerMeter),
+  };
 }
 
 export function getManifoldLayout(

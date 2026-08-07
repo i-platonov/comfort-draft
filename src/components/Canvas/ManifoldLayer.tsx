@@ -3,6 +3,7 @@ import { Circle, Group, Layer, Rect, Text } from 'react-konva';
 import { Manifold, Zone } from '../../types';
 import { useStore } from '../../state/store';
 import { getManifoldLayout } from '../../geometry/manifoldRouting';
+import { canvas } from '../../theme';
 
 interface Props {
   manifold: Manifold | null;
@@ -62,8 +63,8 @@ function ManifoldLayer({ manifold, zones, pixelsPerMeter }: Props) {
         <Rect
           width={width}
           height={height}
-          fill="#1e3a5f"
-          stroke={armed ? '#facc15' : '#4a9eff'}
+          fill={canvas.manifoldFill}
+          stroke={armed ? canvas.manifoldStrokeArmed : canvas.manifoldStroke}
           strokeWidth={2}
           cornerRadius={4}
         />
@@ -71,8 +72,8 @@ function ManifoldLayer({ manifold, zones, pixelsPerMeter }: Props) {
           x={width / 2}
           y={-handleOffset}
           radius={handleRadius}
-          fill="#4a9eff"
-          stroke="#dbeafe"
+          fill={canvas.manifoldHandleFill}
+          stroke={canvas.manifoldHandleStroke}
           strokeWidth={1}
           draggable
           onDragMove={(event) => {
@@ -91,7 +92,7 @@ function ManifoldLayer({ manifold, zones, pixelsPerMeter }: Props) {
         <Text
           text="MANIFOLD"
           fontSize={8}
-          fill="white"
+          fill={canvas.manifoldLabel}
           width={width}
           height={height}
           align="center"

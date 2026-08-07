@@ -21,6 +21,7 @@ import {
   projectPointOntoManifold,
 } from '../geometry/manifoldRouting';
 import { isAxisAlignedRect, resizeRectFromCorner } from '../geometry/rect';
+import { ZONE_COLORS } from '../theme';
 import {
   assembleLeaderPath,
   getIncomingLegDirection,
@@ -37,19 +38,6 @@ const MANIFOLD_CLICK_MARGIN_PX = 10;
 const MIN_LEADER_SEGMENT_PX = 15;
 /** Below this, a zone resize is treated as not having moved the connection point — existing leader routing is kept. */
 const ZONE_RESIZE_ROUTING_TOLERANCE_PX = 20;
-
-const ZONE_COLORS = [
-  '#e74c3c',
-  '#3498db',
-  '#2ecc71',
-  '#f39c12',
-  '#9b59b6',
-  '#1abc9c',
-  '#e67e22',
-  '#34495e',
-  '#e91e63',
-  '#00bcd4',
-];
 
 const DEFAULT_ZONE_PADDING_MM = 100;
 const DEFAULT_ZONE_CONNECTION_CORNER: ZoneConnectionCorner = 'bottom-left';

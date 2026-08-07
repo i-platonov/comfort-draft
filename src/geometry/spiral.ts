@@ -827,9 +827,12 @@ function addFinalCenterLeg(
 }
 
 /**
- * Round the 90-degree corners of an orthogonal polyline.
+ * Round the corners of a polyline. Right angles - every corner of a spiral - take an
+ * exact quarter-circle fillet; other angles (a leader cutting diagonally into the
+ * manifold) get the general tangent-length fillet, which reduces to the same thing at
+ * 90 degrees.
  */
-function roundOrthogonalPath(
+export function roundPathCorners(
     points: Point[],
     preferredRadius: number,
     arcSteps = 4,
@@ -874,22 +877,33 @@ function roundOrthogonalPath(
             y: outgoing.y / outgoingLength,
         };
 
-        // Not a 90-degree corner.
-        if (
-            Math.abs(
-                inDirection.x * outDirection.x +
-                inDirection.y * outDirection.y,
-            ) > EPSILON
-        ) {
+        const alignment =
+            inDirection.x * outDirection.x +
+            inDirection.y * outDirection.y;
+
+        // Straight through, or doubling back on itself: nothing to fillet.
+        if (Math.abs(alignment) > 1 - EPSILON) {
             pushUnique(result, corner);
             continue;
         }
 
-        const radius = Math.min(
-            preferredRadius,
+        const isRightAngle = Math.abs(alignment) < EPSILON;
+
+        /*
+         * How far back along each leg the arc has to start. A quarter-circle
+         * fillet leaves exactly `radius`; a shallower turn leaves less, a
+         * sharper one more, by the half-angle of the deflection.
+         */
+        const deflection = Math.acos(Math.max(-1, Math.min(1, alignment)));
+        const tangentRatio = isRightAngle ? 1 : Math.tan(deflection / 2);
+
+        const tangentLength = Math.min(
+            preferredRadius * tangentRatio,
             incomingLength / 2,
             outgoingLength / 2,
         );
+
+        const radius = tangentLength / tangentRatio;
 
         if (radius < EPSILON) {
             pushUnique(result, corner);
@@ -897,22 +911,34 @@ function roundOrthogonalPath(
         }
 
         const arcStart = {
-            x: corner.x - inDirection.x * radius,
-            y: corner.y - inDirection.y * radius,
+            x: corner.x - inDirection.x * tangentLength,
+            y: corner.y - inDirection.y * tangentLength,
         };
 
         const arcEnd = {
-            x: corner.x + outDirection.x * radius,
-            y: corner.y + outDirection.y * radius,
+            x: corner.x + outDirection.x * tangentLength,
+            y: corner.y + outDirection.y * tangentLength,
         };
 
         /*
-         * For an axis-aligned 90-degree fillet, the circle center is obtained
-         * by moving from arcStart in the outgoing direction.
+         * The center sits one radius off arcStart, square to the incoming leg
+         * on the side being turned towards. For an axis-aligned 90-degree
+         * fillet that direction is simply the outgoing one.
          */
+        const turnSign = Math.sign(
+            inDirection.x * outDirection.y -
+            inDirection.y * outDirection.x,
+        );
+        const inwardDirection = isRightAngle
+            ? outDirection
+            : {
+                x: -inDirection.y * turnSign,
+                y: inDirection.x * turnSign,
+            };
+
         const center = {
-            x: arcStart.x + outDirection.x * radius,
-            y: arcStart.y + outDirection.y * radius,
+            x: arcStart.x + inwardDirection.x * radius,
+            y: arcStart.y + inwardDirection.y * radius,
         };
 
         const startAngle = Math.atan2(
@@ -1373,12 +1399,12 @@ function generateCanonicalSpiral(
     if (supply.length < 2 || returnInward.length < 2) {
         return [];
     }
-    const roundedSupply = roundOrthogonalPath(
+    const roundedSupply = roundPathCorners(
         supply,
         spacing / 2,
     );
 
-    const roundedReturnInward = roundOrthogonalPath(
+    const roundedReturnInward = roundPathCorners(
         returnInward,
         spacing / 2,
     );

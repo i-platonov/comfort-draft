@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { Arc, Circle, Layer, Line } from 'react-konva';
 import { DxfEntity } from '../../types';
+import { canvas } from '../../theme';
 
 interface Props {
   entities: DxfEntity[];
@@ -31,7 +32,7 @@ function DxfLayer({ entities, transform }: Props) {
           <Line
             key={`line-${idx}`}
             points={[start.x, start.y, end.x, end.y]}
-            stroke="#94a3b8"
+            stroke={canvas.planLine}
             strokeWidth={1}
             listening={false}
           />,
@@ -49,7 +50,7 @@ function DxfLayer({ entities, transform }: Props) {
           <Line
             key={`poly-${idx}`}
             points={points}
-            stroke="#94a3b8"
+            stroke={canvas.planLine}
             strokeWidth={1}
             closed={entity.closed}
             listening={false}
@@ -66,7 +67,7 @@ function DxfLayer({ entities, transform }: Props) {
             x={center.x}
             y={center.y}
             radius={entity.radius * transform.scale}
-            stroke="#94a3b8"
+            stroke={canvas.planLine}
             strokeWidth={1}
             listening={false}
           />,
@@ -87,7 +88,7 @@ function DxfLayer({ entities, transform }: Props) {
             outerRadius={entity.radius * transform.scale}
             angle={Math.abs(endAngle - startAngle)}
             rotation={startAngle}
-            stroke="#94a3b8"
+            stroke={canvas.planLine}
             strokeWidth={1}
             fill=""
             listening={false}

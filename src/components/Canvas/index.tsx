@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Konva from 'konva';
 import { Arrow, Circle, Layer, Line, Rect, Stage, Text } from 'react-konva';
 import { useStore } from '../../state/store';
-import { getSpiralStubs } from '../../geometry/spiral';
+import { getSpiralStubs, roundPathCorners } from '../../geometry/spiral';
 import {
   LEADER_DOUBLE_LINE_HALF_GAP_PX,
   computeLeaderPreviewPath,
@@ -18,6 +18,7 @@ import ImageLayer from './ImageLayer';
 import LeaderLayer from './LeaderLayer';
 import ManifoldLayer from './ManifoldLayer';
 import ZoneLayer from './ZoneLayer';
+import { canvas } from '../../theme';
 
 const PANEL_WIDTH = 320;
 const TOP_TOOLBAR_HEIGHT = 44;
@@ -216,8 +217,15 @@ export default function Canvas() {
             getIncomingLegDirection(exitDir, routing.points),
           );
 
-    const path = computeLeaderPreviewPath(zone.spiral, [...routing.points, previewPoint]);
-    if (!path) return null;
+    const drawn = computeLeaderPreviewPath(zone.spiral, [...routing.points, previewPoint]);
+    if (!drawn) return null;
+
+    // Filleted like the committed leader, so the preview shows the pipe that will be laid.
+    const bendRadiusPx = Math.max(
+      ((zone.spacingMm / 1000) * pixelsPerMeter) / 2,
+      LEADER_DOUBLE_LINE_HALF_GAP_PX * 2,
+    );
+    const path = roundPathCorners(drawn, bendRadiusPx);
 
     return {
       path,
@@ -264,7 +272,7 @@ export default function Canvas() {
         if (event.target !== stageRef.current) return;
         setStageTransform(stageScale, event.target.x(), event.target.y());
       }}
-      style={{ cursor, background: '#1a1a2e' }}
+      style={{ cursor, background: canvas.background }}
     >
       {/* Background layer */}
       {background?.kind === 'dxf' && (
@@ -291,7 +299,7 @@ export default function Canvas() {
           <>
             <Line
               points={drawingFlatPoints}
-              stroke="#f39c12"
+              stroke={canvas.drawPreview}
               strokeWidth={2}
               dash={[5, 3]}
               listening={false}
@@ -302,7 +310,7 @@ export default function Canvas() {
                 x={point.x}
                 y={point.y}
                 radius={4}
-                fill="#f39c12"
+                fill={canvas.drawPreview}
                 listening={false}
               />
             ))}
@@ -342,7 +350,7 @@ export default function Canvas() {
 
         {/* Rectangle drawing preview */}
         {drawRectStart && (
-          <Circle x={drawRectStart.x} y={drawRectStart.y} radius={5} fill="#f39c12" listening={false} />
+          <Circle x={drawRectStart.x} y={drawRectStart.y} radius={5} fill={canvas.drawPreview} listening={false} />
         )}
         {rectPreview && (
           <>
@@ -351,7 +359,7 @@ export default function Canvas() {
               y={rectPreview.y}
               width={rectPreview.width}
               height={rectPreview.height}
-              stroke="#f39c12"
+              stroke={canvas.drawPreview}
               strokeWidth={2}
               dash={[6, 3]}
               fill="rgba(243,156,18,0.1)"
@@ -362,7 +370,7 @@ export default function Canvas() {
                 x={rectPreview.x + 6}
                 y={rectPreview.y + 6}
                 text={`Area: ${rectPreviewAreaM2.toFixed(2)} m²`}
-                fill="#f39c12"
+                fill={canvas.drawPreview}
                 fontSize={14}
                 fontStyle="bold"
                 listening={false}
@@ -373,10 +381,10 @@ export default function Canvas() {
 
         {/* Calibration overlay */}
         {calibration.active && calibration.point1 && (
-          <Circle x={calibration.point1.x} y={calibration.point1.y} radius={5} fill="#e74c3c" />
+          <Circle x={calibration.point1.x} y={calibration.point1.y} radius={5} fill={canvas.calibration} />
         )}
         {calibration.active && calibration.point2 && (
-          <Circle x={calibration.point2.x} y={calibration.point2.y} radius={5} fill="#e74c3c" />
+          <Circle x={calibration.point2.x} y={calibration.point2.y} radius={5} fill={canvas.calibration} />
         )}
         {calibration.active && calibration.point1 && calibration.point2 && (
           <Line
@@ -386,7 +394,7 @@ export default function Canvas() {
               calibration.point2.x,
               calibration.point2.y,
             ]}
-            stroke="#e74c3c"
+            stroke={canvas.calibration}
             strokeWidth={2}
             dash={[5, 3]}
           />
