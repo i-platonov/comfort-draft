@@ -1285,41 +1285,6 @@ function copyLane(lane: Point[], length: number): Point[] {
     return lane.slice(0, length).map(point => ({ x: point.x, y: point.y }));
 }
 
-/**
- * How far a path strays onto the wrong side of one straight run of pipe, millimetres.
- *
- * Only the shallower of the path's two excursions counts, and only where it is actually
- * abreast of the run: a path that sits on one side and dips a little over is measured by
- * that dip, while one that cuts clean through and carries on is measured by however far it
- * got. Zero when the path keeps to one side, which is the usual answer.
- */
-function strayDepthPastRun(path: Point[], from: Point, to: Point): number {
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    const runLength = Math.hypot(dx, dy);
-
-    if (runLength < EPSILON) return 0;
-
-    let deepestAbove = 0;
-    let deepestBelow = 0;
-
-    for (const point of path) {
-        const alongRun =
-            ((point.x - from.x) * dx + (point.y - from.y) * dy) / runLength;
-
-        // Past either end of the run there is nothing to be on the wrong side of.
-        if (alongRun < 0 || alongRun > runLength) continue;
-
-        const across =
-            ((point.x - from.x) * dy - (point.y - from.y) * dx) / runLength;
-
-        deepestAbove = Math.max(deepestAbove, across);
-        deepestBelow = Math.max(deepestBelow, -across);
-    }
-
-    return Math.min(deepestAbove, deepestBelow);
-}
-
 /** Distance from a point to the nearest place on a segment. */
 function pointToSegmentDistance(point: Point, from: Point, to: Point): number {
     const dx = to.x - from.x;
@@ -1337,14 +1302,37 @@ function pointToSegmentDistance(point: Point, from: Point, to: Point): number {
 }
 
 /**
- * How close a run of pipe comes to any part of a lane, skipping the last `ignoreTail`
- * segments of it - which is how a run that is itself part of that lane excuses its own
- * neighbours from the comparison.
+ * How many of a lane's segments are further back than `tailMm` of pipe from its end.
+ *
+ * Clearance is a rule about how close two different passes may run, not about how close a
+ * run comes to the pipe it is itself a continuation of - and the only way to tell those
+ * apart is by how far apart they are along the pipe. Anything within a stride of the end is
+ * the same run still going; a genuinely different pass is a whole ring away.
  */
-function clearanceToLane(from: Point, to: Point, lane: Point[], ignoreTail = 0): number {
+function laneSegmentsBeyondTail(lane: Point[], tailMm: number): number {
+    let fromEnd = 0;
+
+    for (let i = lane.length - 2; i >= 0; i--) {
+        if (fromEnd >= tailMm) return i + 1;
+        fromEnd += Math.hypot(lane[i + 1].x - lane[i].x, lane[i + 1].y - lane[i].y);
+    }
+
+    return 0;
+}
+
+/**
+ * How close a run of pipe comes to the first `segmentCount` segments of a lane. Callers
+ * leave out the segments the run is a continuation of, which it is touching by definition.
+ */
+function clearanceToLane(
+    from: Point,
+    to: Point,
+    lane: Point[],
+    segmentCount: number,
+): number {
     let closest = Infinity;
 
-    for (let i = 0; i + 1 + ignoreTail < lane.length; i++) {
+    for (let i = 0; i < segmentCount && i + 1 < lane.length; i++) {
         closest = Math.min(
             closest,
             pointToSegmentDistance(from, lane[i], lane[i + 1]),
@@ -1370,17 +1358,65 @@ function centerTurnStrayAllowanceMm(gapMm: number, bendRadius: number): number {
 }
 
 /**
- * Whether a path cuts through pipe that is already down, rather than merely leaning over it
- * by as much as it is entitled to.
+ * Whether the center turn keeps its distance from pipe that is already down.
+ *
+ * The turn has to hold the same spacing off its neighbours that every other pass does - it
+ * reaches a full radius beyond where the lanes stop, and a pass sitting one spacing ahead
+ * of them is only that one radius away from being touched.
+ *
+ * The straight each lane ends on is exempt: the turn leaves it tangentially, so it is
+ * touching that one by definition.
  */
-function pathCutsThroughLane(path: Point[], lane: Point[], allowance: number): boolean {
-    for (let i = 0; i + 1 < lane.length; i++) {
-        if (strayDepthPastRun(path, lane[i], lane[i + 1]) > allowance + EPSILON) {
-            return true;
-        }
+function turnClearanceToLane(turn: Point[], lane: Point[], bendRadius: number): number {
+    // The turn is only about two radii across, so pipe within that of the lane's end is the
+    // limb it springs from, corner and all - not a pass it has to keep away from.
+    const segmentCount = laneSegmentsBeyondTail(lane, 2 * bendRadius);
+    let closest = Infinity;
+
+    for (let i = 0; i + 1 < turn.length; i++) {
+        closest = Math.min(
+            closest,
+            clearanceToLane(turn[i], turn[i + 1], lane, segmentCount),
+        );
     }
 
-    return false;
+    return closest;
+}
+
+/**
+ * Back both lanes off by `distanceMm` along the straights they end on, taking the turn with
+ * them.
+ *
+ * A turn reaches a radius beyond where its lanes stop, so a pass crossing ahead of them
+ * needs a radius and a spacing of room - and a spiral, by its nature, has laid one exactly
+ * one spacing ahead. The answer is to stop the two lanes a little shorter, not to give up
+ * the rings that got them there: the turn moves back with them and the pass gets its room.
+ *
+ * Both move by the same amount, so their ends stay level with each other and the turn stays
+ * the half circle it was. Returns false when the straights have not got it to give - below
+ * a radius they can no longer carry the corner they start on.
+ */
+function pullBackLaneEnds(
+    lanes: Point[][],
+    distanceMm: number,
+    bendRadius: number,
+): boolean {
+    const pulls = lanes.map(lane => {
+        const end = lane[lane.length - 1];
+        const previous = lane[lane.length - 2];
+        const run = Math.hypot(end.x - previous.x, end.y - previous.y);
+
+        return { end, previous, run };
+    });
+
+    if (pulls.some(pull => pull.run - distanceMm < bendRadius - EPSILON)) return false;
+
+    for (const { end, previous, run } of pulls) {
+        end.x += ((previous.x - end.x) / run) * distanceMm;
+        end.y += ((previous.y - end.y) / run) * distanceMm;
+    }
+
+    return true;
 }
 
 /**
@@ -1507,8 +1543,9 @@ function widenCenterGapToBendRadius(
      * is now two radii from by construction.
      */
     if (
-        clearanceToLane(moved[0], moved[1], supply, 1) < spacing - EPSILON ||
-        clearanceToLane(moved[0], moved[1], returnInward, 2) < spacing - EPSILON
+        clearanceToLane(moved[0], moved[1], supply, supply.length - 1) < spacing - EPSILON ||
+        clearanceToLane(moved[0], moved[1], returnInward, returnInward.length - 3) <
+            spacing - EPSILON
     ) {
         return;
     }
@@ -1518,6 +1555,13 @@ function widenCenterGapToBendRadius(
     returnEnd.x = moved[1].x;
     returnEnd.y = moved[1].y;
 }
+
+/**
+ * How many times the lanes may be backed off to give the center turn its clearance before
+ * the ring itself is given up instead. Each go corrects the whole shortfall, so this only
+ * covers the pass the turn is measured against changing as the lanes shorten.
+ */
+const CENTER_PULL_BACK_ATTEMPTS = 3;
 
 /** Angular resolution the center turn's arcs are drawn at. */
 const CENTER_TURN_STEP_RADIANS = Math.PI / 12;
@@ -1902,49 +1946,61 @@ function joinLanesAtCenter(
 
     widenCenterGapToBendRadius(supply, returnInward, spacing, bendRadius, polygon);
 
-    const roundedSupply = roundPathCorners(
-        supply,
-        bendRadius,
-    );
-
-    const roundedReturnInward = roundPathCorners(
-        returnInward,
-        bendRadius,
-    );
-
-    const supplyEnd =
-        roundedSupply[roundedSupply.length - 1];
-
-    const supplyPrevious =
-        roundedSupply[roundedSupply.length - 2];
-
-    const returnEnd =
-        roundedReturnInward[roundedReturnInward.length - 1];
-
-    const centerTurn = generateCenterTurn(
-        supplyPrevious,
-        supplyEnd,
-        returnEnd,
-        bendRadius,
-    );
-
     /*
-     * The turn is the one part of the spiral not laid out against the zone's outline - it
-     * swings clear of the lanes to hold its radius, and nothing so far has checked where
-     * that swing lands. It has to end up inside the zone and clear of the pipe already in
-     * the ground; where it doesn't, the caller stops the lanes further out and the swing
-     * gets the floor those rings were using.
+     * The turn is the one part of the spiral not laid out against the zone's outline. It
+     * reaches a radius beyond where the lanes stop, and a spiral has by its nature laid a
+     * pass one spacing ahead of them - so on its own it would be left a radius short of
+     * clear. Backing the two lanes off by the shortfall moves the turn back with them; a
+     * couple of goes settles it, because shortening the lanes moves what the turn is
+     * measured against too.
      */
-    const strayAllowance = centerTurnStrayAllowanceMm(
-        Math.hypot(returnEnd.x - supplyEnd.x, returnEnd.y - supplyEnd.y),
-        bendRadius,
-    );
+    let roundedSupply: Point[] = [];
+    let roundedReturnInward: Point[] = [];
+    let centerTurn: Point[] = [];
 
-    if (
-        pathCutsThroughLane(centerTurn, roundedSupply, strayAllowance) ||
-        pathCutsThroughLane(centerTurn, roundedReturnInward, strayAllowance)
-    ) {
-        return null;
+    for (let attempt = 0; ; attempt++) {
+        roundedSupply = roundPathCorners(supply, bendRadius);
+        roundedReturnInward = roundPathCorners(returnInward, bendRadius);
+
+        const supplyEnd = roundedSupply[roundedSupply.length - 1];
+        const supplyPrevious = roundedSupply[roundedSupply.length - 2];
+        const returnEnd = roundedReturnInward[roundedReturnInward.length - 1];
+
+        centerTurn = generateCenterTurn(
+            supplyPrevious,
+            supplyEnd,
+            returnEnd,
+            bendRadius,
+        );
+
+        /*
+         * A turn that had to swing wide to hold its radius gives up exactly that much of
+         * its clearance - it is out beyond its own lane, so it is that much nearer whatever
+         * is on the far side. A turn that didn't owes the full spacing like any other pass.
+         */
+        const minimumClearance =
+            spacing -
+            centerTurnStrayAllowanceMm(
+                Math.hypot(returnEnd.x - supplyEnd.x, returnEnd.y - supplyEnd.y),
+                bendRadius,
+            );
+
+        const shortfall =
+            minimumClearance -
+            Math.min(
+                turnClearanceToLane(centerTurn, roundedSupply, bendRadius),
+                turnClearanceToLane(centerTurn, roundedReturnInward, bendRadius),
+            );
+
+        if (shortfall <= EPSILON) break;
+
+        // Out of goes, or the lanes have no more to give: the caller drops a ring instead.
+        if (
+            attempt >= CENTER_PULL_BACK_ATTEMPTS ||
+            !pullBackLaneEnds([supply, returnInward], shortfall, bendRadius)
+        ) {
+            return null;
+        }
     }
 
     const insideZone =
