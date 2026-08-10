@@ -1,6 +1,30 @@
+<div align="center">
+
+<!-- GitHub swaps these by the reader's theme; the artwork is real output from the
+     spiral generator in src/geometry/spiral.ts, not a drawing of it. -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/banner-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset=".github/banner-light.png">
+  <img alt="Underfloor Heating Designer — draw your rooms, get loops you can actually lay" src=".github/banner-light.png">
+</picture>
+
+### [**Open the app → ufhdesigner.com**](https://ufhdesigner.com)
+
+[![Licence](https://img.shields.io/badge/licence-Apache%202.0-blue)](LICENSE)
+[![Price](https://img.shields.io/badge/price-free-brightgreen)](https://ufhdesigner.com)
+[![Runs in the browser](https://img.shields.io/badge/runs-in%20your%20browser-informational)](https://ufhdesigner.com/app)
+[![Built with](https://img.shields.io/badge/React%20·%20TypeScript%20·%20Vite-black)](#tech-stack)
+
+</div>
+
 # Underfloor Heating Circuit Designer
 
-An interactive React + Vite + TypeScript single-page application for designing underfloor (radiant floor) heating circuits.
+Design underfloor (radiant floor) heating circuits in the browser: import a floor plan,
+draw your rooms, and get a counter-flow spiral for each one with real pipe lengths,
+circuit-length warnings and heat output per zone.
+
+**No install, no account, nothing uploaded** — [ufhdesigner.com](https://ufhdesigner.com)
+runs entirely client-side. Free and open source.
 
 ## Features
 
