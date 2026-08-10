@@ -1,5 +1,20 @@
 import { type ChangeEvent, useRef, useState } from 'react';
 import DxfParser from 'dxf-parser';
+import {
+    Check,
+    FolderOpen,
+    Home,
+    Flame,
+    Map,
+    Move,
+    RefreshCw,
+    Ruler,
+    Save,
+    Settings,
+    Thermometer,
+    Trash2,
+    Upload,
+} from 'lucide-react';
 import { parseDxfEntities, placeDxfInDrawing } from '../../geometry/dxfHelpers';
 import { mmToMeters } from '../../geometry/length';
 import { UFH_STORE_STORAGE_KEY, partializeStoreState, useStore } from '../../state/store';
@@ -179,7 +194,7 @@ export default function SidePanel() {
     return (
         <div className="side-panel">
             <div className="panel-header">
-                <h1>🌡️ UFH Designer</h1>
+                <h1><Thermometer /> UFH Designer</h1>
             </div>
 
             <div className="side-panel-tabs">
@@ -187,26 +202,26 @@ export default function SidePanel() {
                     className={`side-panel-tab ${activeTab === 'setup' ? 'active' : ''}`}
                     onClick={() => setActiveTab('setup')}
                 >
-                    ⚙️ Setup
+                    <Settings /> Setup
                 </button>
                 <button
                     className={`side-panel-tab ${activeTab === 'zones' ? 'active' : ''}`}
                     onClick={() => setActiveTab('zones')}
                 >
-                    🏠 Zones {zones.length > 0 && <span className="zone-count">{zones.length}</span>}
+                    <Home /> Zones {zones.length > 0 && <><br/><span className="zone-count">{zones.length}</span></>}
                 </button>
                 <button
                     className={`side-panel-tab ${activeTab === 'heat' ? 'active' : ''}`}
                     onClick={() => setActiveTab('heat')}
                 >
-                    🔥 Heat
+                    <Flame /> Heat
                 </button>
             </div>
 
             {activeTab === 'setup' && (
                 <div className="side-panel-tab-content">
                     <section className="panel-section">
-                        <h2>💾 Project</h2>
+                        <h2><Save /> Project</h2>
                         <input
                             ref={projectFileInputRef}
                             type="file"
@@ -215,20 +230,20 @@ export default function SidePanel() {
                             style={{ display: 'none' }}
                         />
                         <button className="btn" onClick={handleSaveProject}>
-                            💾 Save Project
+                            <Save /> Save Project
                         </button>
                         <button
                             className="btn btn-secondary"
                             style={{ marginTop: '4px' }}
                             onClick={() => projectFileInputRef.current?.click()}
                         >
-                            📂 Load Project
+                            <FolderOpen /> Load Project
                         </button>
                         {projectError && <p className="error">{projectError}</p>}
                     </section>
 
                     <section className="panel-section">
-                        <h2>📐 Floor Plan</h2>
+                        <h2><Map /> Floor Plan</h2>
                         <input
                             ref={fileInputRef}
                             type="file"
@@ -237,7 +252,7 @@ export default function SidePanel() {
                             style={{ display: 'none' }}
                         />
                         <button className="btn" onClick={() => fileInputRef.current?.click()}>
-                            {background ? '🔄 Re-import DXF or Image' : '📁 Import DXF or Image'}
+                            {background ? <><RefreshCw /> Re-import DXF or Image</> : <><Upload /> Import DXF or Image</>}
                         </button>
                         <p className="info" style={{ fontSize: '0.75rem' }}>
                             Accepts: DXF, PNG, JPG, WEBP, GIF
@@ -253,21 +268,21 @@ export default function SidePanel() {
                                         setToolMode(toolMode === 'panBackground' ? 'select' : 'panBackground')
                                     }
                                 >
-                                    ✥ {toolMode === 'panBackground' ? 'Done moving plan' : 'Move plan'}
+                                    <Move /> {toolMode === 'panBackground' ? 'Done moving plan' : 'Move plan'}
                                 </button>
                                 <button
                                     className="btn btn-secondary"
                                     style={{ marginTop: '4px' }}
                                     onClick={() => setBackground(null)}
                                 >
-                                    🗑 Clear background
+                                    <Trash2 /> Clear background
                                 </button>
                             </>
                         )}
                     </section>
 
                     <section className="panel-section">
-                        <h2>📏 Scale Calibration</h2>
+                        <h2><Ruler /> Scale Calibration</h2>
                         <p className="info">
                             The drawing is in millimetres, so zones are already true to size.
                             Calibrating resizes the imported plan to match them — measure two
@@ -278,7 +293,7 @@ export default function SidePanel() {
                         )}
                         {!calibration.active ? (
                             <button className="btn" onClick={startCalibration} disabled={!background}>
-                                📏 Calibrate Scale
+                                <Ruler /> Calibrate Scale
                             </button>
                         ) : (
                             <div>
@@ -304,7 +319,7 @@ export default function SidePanel() {
                                             className="btn btn-primary"
                                             onClick={() => finishCalibration(Number(calibrationDistance))}
                                         >
-                                            ✓ Apply
+                                            <Check /> Apply
                                         </button>
                                     </div>
                                 )}
@@ -316,7 +331,7 @@ export default function SidePanel() {
                     </section>
 
                     <section className="panel-section">
-                        <h2>⚙️ Default Settings</h2>
+                        <h2><Settings /> Default Settings</h2>
                         <div className="setting-row">
                             <label>Max circuit length:</label>
                             <input
@@ -360,27 +375,29 @@ export default function SidePanel() {
             )}
 
             {activeTab === 'zones' && (
-                <section className="panel-section zones-section">
-                    {zones.length === 0 && (
-                        <p className="info">No zones yet. Use "Draw Zone" or "Draw Rect" to create one.</p>
-                    )}
-                    <div className="zone-list">
-                        {zones.map((zone) => (
-                            <ZoneCard
-                                key={zone.id}
-                                zone={zone}
-                                isSelected={zone.id === selectedZoneId}
-                                maxCircuitLengthM={maxCircuitLengthM}
-                            />
-                        ))}
-                    </div>
-
-                    {zones.length > 0 && (
-                        <div className="grand-total">
-                            <strong>Grand Total: {totalGrand.toFixed(1)} m</strong>
+                <div className="side-panel-tab-content">
+                    <section className="panel-section">
+                        {zones.length === 0 && (
+                            <p className="info">No zones yet. Use "Polygon zone" or "Rect zone" to create one.</p>
+                        )}
+                        <div className="zone-list">
+                            {zones.map((zone) => (
+                                <ZoneCard
+                                    key={zone.id}
+                                    zone={zone}
+                                    isSelected={zone.id === selectedZoneId}
+                                    maxCircuitLengthM={maxCircuitLengthM}
+                                />
+                            ))}
                         </div>
-                    )}
-                </section>
+
+                        {zones.length > 0 && (
+                            <div className="grand-total">
+                                <strong>Grand Total: {totalGrand.toFixed(1)} m</strong>
+                            </div>
+                        )}
+                    </section>
+                </div>
             )}
 
             {activeTab === 'heat' && <HeatTab />}

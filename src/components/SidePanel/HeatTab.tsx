@@ -1,3 +1,4 @@
+import { Flame, Thermometer, TriangleAlert } from 'lucide-react';
 import { useStore } from '../../state/store';
 import { zoneFlowLpm, zoneHeatOutputW } from '../../geometry/heat';
 import { mm2ToSquareMeters, mmToMeters } from '../../geometry/length';
@@ -23,7 +24,7 @@ export default function HeatTab() {
   return (
     <div className="side-panel-tab-content">
       <section className="panel-section">
-        <h2>🌡️ Flow Water</h2>
+        <h2><Thermometer /> Flow Water</h2>
 
         <div className="slider-row">
           <div className="slider-row-label">
@@ -70,12 +71,12 @@ export default function HeatTab() {
           />
         </div>
 
-        {deltaT === 0 && <p className="warning">⚠ Return temp must be below supply temp to dissipate heat.</p>}
+        {deltaT === 0 && <p className="warning"><TriangleAlert /> Return temp must be below supply temp to dissipate heat.</p>}
         <p className="info">ΔT {deltaT.toFixed(1)}°C · Q = flow × ΔT × 4186 J/(kg·K), water at 1 kg/L</p>
       </section>
 
-      <section className="panel-section zones-section">
-        <h2>🔥 Heat Output</h2>
+      <section className="panel-section">
+        <h2><Flame /> Heat Output</h2>
         {zones.length === 0 && <p className="info">No zones yet.</p>}
         <div className="zone-list">
           {zones.map((zone) => {

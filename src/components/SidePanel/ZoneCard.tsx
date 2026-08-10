@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { MoveHorizontal, MoveVertical, Pencil, Trash2, TriangleAlert } from 'lucide-react';
 import { SpiralStartDirection, Zone, ZoneConnectionCorner } from '../../types';
 import { useStore } from '../../state/store';
 import EditableSelect from './EditableSelect';
@@ -18,9 +19,13 @@ const CORNER_OPTIONS: Array<{ value: ZoneConnectionCorner; label: string }> = [
   { value: 'bottom-left', label: 'Bottom-left' },
   { value: 'bottom-right', label: 'Bottom-right' },
 ];
-const START_DIRECTION_OPTIONS: Array<{ value: SpiralStartDirection; label: string }> = [
-  { value: 'horizontal', label: '↔ Horizontal' },
-  { value: 'vertical', label: '↕ Vertical' },
+const START_DIRECTION_OPTIONS: Array<{
+  value: SpiralStartDirection;
+  label: string;
+  Icon: typeof MoveHorizontal;
+}> = [
+  { value: 'horizontal', label: 'Horizontal', Icon: MoveHorizontal },
+  { value: 'vertical', label: 'Vertical', Icon: MoveVertical },
 ];
 
 export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props) {
@@ -89,7 +94,7 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
               setToolMode('editBoundary');
             }}
           >
-            ✏️
+            <Pencil />
           </button>
           <button
             className="btn-icon btn-danger"
@@ -99,7 +104,7 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
               deleteZone(zone.id);
             }}
           >
-            🗑️
+            <Trash2 />
           </button>
         </div>
       </div>
@@ -155,7 +160,7 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
       <div className="zone-spacing">
         <label>Start:</label>
         <div className="spacing-presets">
-          {START_DIRECTION_OPTIONS.map((option) => (
+          {START_DIRECTION_OPTIONS.map(({ Icon, ...option }) => (
             <button
               key={option.value}
               className={`btn-preset ${zone.startDirection === option.value ? 'active' : ''}`}
@@ -165,6 +170,7 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
                 updateZoneStartDirection(zone.id, option.value);
               }}
             >
+              <Icon />
               {option.label}
             </button>
           ))}
@@ -183,7 +189,7 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
           <span>Total:</span>
           <span>{totalLength.toFixed(1)} m</span>
         </div>
-        {isOverLimit && <div className="warning">⚠️ Exceeds {maxCircuitLengthM} m limit!</div>}
+        {isOverLimit && <div className="warning"><TriangleAlert /> Exceeds {maxCircuitLengthM} m limit!</div>}
       </div>
     </div>
   );

@@ -186,6 +186,61 @@ input {
   flex: 0 0 auto;
 }
 
+/*
+ * Icons.
+ *
+ * Every icon in the app is a Lucide line drawing rather than an emoji, because an emoji is
+ * whatever the reader's platform decides it is — the wastebasket comes out of Apple's font
+ * as a pale wire mesh, and differently again on Windows — and none of them can be styled.
+ * These are drawn in currentColor, so an icon is simply the colour of the text beside it.
+ *
+ * Size and weight are set here rather than per call site: Lucide writes width/height as
+ * attributes, which CSS overrides, so this one rule governs the lot.
+ */
+.lucide {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.8;
+  flex: 0 0 auto;
+}
+
+/* Headings carry their icon a little larger, in proportion to the text. */
+.panel-header h1 .lucide {
+  width: 17px;
+  height: 17px;
+}
+
+.panel-section h2 .lucide {
+  width: 13px;
+  height: 13px;
+}
+
+/*
+ * Block-level, so a heading still claims its own line and the control below it doesn't ride
+ * up alongside.
+ */
+.panel-header h1,
+.panel-section h2,
+.warning,
+.side-panel-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* These sit inside a line of other content, so they stay inline. */
+.toolbar-hint.success,
+.btn-preset {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* A tab is a flex item in its own right, so it needs centring back. */
+.side-panel-tab {
+  justify-content: center;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -258,15 +313,22 @@ input {
   padding: 3px 5px;
   border-radius: 4px;
   font-size: 13px;
-  transition: background 0.15s;
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn-icon .lucide {
+  display: block;
 }
 
 .btn-icon:hover {
   background: var(--hover-tint);
+  color: var(--text);
 }
 
 .btn-danger:hover {
   background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .top-toolbar-tools {
@@ -402,11 +464,6 @@ input {
   font-size: 12px;
 }
 
-.zones-section {
-  flex: 1;
-  min-height: 0;
-}
-
 .zone-count {
   display: inline-block;
   background: var(--accent);
@@ -423,8 +480,6 @@ input {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 70vh;
-  overflow-y: auto;
 }
 
 .zone-card {

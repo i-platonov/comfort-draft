@@ -1,13 +1,21 @@
+import {
+    Link2,
+    Maximize2,
+    MousePointer2,
+    RectangleHorizontal,
+    RulerDimensionLine, Waypoints,
+    Wrench,
+} from 'lucide-react';
 import { useStore } from '../../state/store';
 import { ToolMode } from '../../types';
 
-const TOOL_OPTIONS: Array<{ mode: ToolMode; label: string }> = [
-  { mode: 'select', label: '↖ Select' },
-  { mode: 'placeManifold', label: '🔧 Manifold' },
-  { mode: 'drawZone', label: '✏️ Draw Zone' },
-  { mode: 'drawRect', label: '▭ Draw Rect' },
-  { mode: 'routeLeader', label: '🔗 Route Leaders' },
-  { mode: 'measure', label: '📏 Measure' },
+const TOOL_OPTIONS: Array<{ mode: ToolMode; label: string; Icon: typeof Wrench }> = [
+  { mode: 'select', label: 'Select', Icon: MousePointer2 },
+  { mode: 'placeManifold', label: 'Manifold', Icon: Wrench },
+  { mode: 'drawZone', label: 'Polygon zone', Icon: Waypoints },
+  { mode: 'drawRect', label: 'Rect zone', Icon: RectangleHorizontal },
+  { mode: 'routeLeader', label: 'Route Leaders', Icon: Link2 },
+  { mode: 'measure', label: 'Measure', Icon: RulerDimensionLine },
 ];
 
 export default function Toolbar() {
@@ -17,12 +25,13 @@ export default function Toolbar() {
 
   return (
     <div className="top-toolbar-tools">
-      {TOOL_OPTIONS.map(({ mode, label }) => (
+      {TOOL_OPTIONS.map(({ mode, label, Icon }) => (
         <button
           key={mode}
           className={`btn tool-btn ${toolMode === mode ? 'active' : ''}`}
           onClick={() => setToolMode(mode)}
         >
+          <Icon />
           {label}
         </button>
       ))}
@@ -31,7 +40,8 @@ export default function Toolbar() {
         onClick={() => fitViewToContent(window.innerWidth - 320, window.innerHeight - 44)}
         title="Zoom and pan to frame the whole drawing"
       >
-        🔍 Fit View
+        <Maximize2 />
+        Fit View
       </button>
     </div>
   );

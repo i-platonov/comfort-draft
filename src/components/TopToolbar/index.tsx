@@ -1,3 +1,4 @@
+import { Check } from 'lucide-react';
 import { useStore } from '../../state/store';
 import Toolbar from '../Toolbar';
 
@@ -34,7 +35,7 @@ export default function TopToolbar() {
       <Toolbar />
       <div className="top-toolbar-status">
         {hint && <span className="toolbar-hint">{hint}</span>}
-        {manifold && <span className="toolbar-hint success">✓ Manifold placed</span>}
+        {manifold && <span className="toolbar-hint success"><Check /> Manifold placed</span>}
       </div>
     </div>
   );

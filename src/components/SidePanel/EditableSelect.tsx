@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 
 interface Props {
   value: number;
@@ -45,7 +46,7 @@ export default function EditableSelect({ value, presets, min, max, onChange, cla
         tabIndex={-1}
         onClick={() => setOpen((prev) => !prev)}
       >
-        ▾
+        <ChevronDown />
       </button>
       {open && (
         <div className="editable-select-menu">

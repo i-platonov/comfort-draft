@@ -8,7 +8,7 @@ An interactive React + Vite + TypeScript single-page application for designing u
 - **Scale Calibration** — Click two points on the background and enter the real-world distance to calibrate pixel→meter conversion; works with both images and DXF
 - **Manifold Placement** — Drop a draggable manifold marker as the central connection point
 - **Zone Creation (polygon)** — Draw freeform polygon zones by clicking vertices; double-click to close
-- **Zone Creation (rectangle)** — "Draw Rect" mode: click first corner, then opposite corner for an axis-aligned rectangle zone
+- **Zone Creation (rectangle)** — "Rect zone" mode: click first corner, then opposite corner for an axis-aligned rectangle zone
 - **Boundary Editing** — Drag zone vertices in "Select" mode with Edit Boundary active
 - **Per-zone Pipe Spacing** — Set spacing per zone (50–500 mm)
 - **Per-zone Connection Corner & Start Direction** — Pick which corner the supply/return connect near, and whether the spiral leaves the manifold running **horizontally** or **vertically**
@@ -40,8 +40,8 @@ npm test         # Run unit tests
 2. **Calibrate scale**: Click "Calibrate Scale", click two known points on the image/DXF, then enter the real-world distance between them in metres.
 3. **Place manifold**: Select the "Manifold" tool and click on the canvas.
 4. **Draw zones**:
-   - *Polygon zone*: Select "Draw Zone", click to add vertices, double-click to close.
-   - *Rectangle zone*: Select "Draw Rect", click the first corner, then click the opposite corner.
+   - *Polygon zone*: Select "Polygon zone", click to add vertices, double-click to close.
+   - *Rectangle zone*: Select "Rectangle zone", click the first corner, then click the opposite corner.
 5. **Adjust spacing**: In each zone card, enter the desired pipe spacing.
 6. **Set the connection**: In each zone card, choose the inlet/outlet corner and the **Start** direction (Horizontal ↔ / Vertical ↕) for how the spiral leaves the manifold.
 7. **View lengths**: The side panel shows spiral length, leader length, and total per zone.
@@ -76,7 +76,7 @@ This "even-N boustrophedon" behaves as the double-lane / counter-flow-with-retur
 
 ## Rectangle Zone Mode
 
-The **"Draw Rect"** toolbar button activates rectangle drawing:
+The **"Rect zone"** toolbar button activates rectangle drawing:
 
 - Click to set the **first corner**.
 - Click again at the **opposite corner** to create an axis-aligned 4-vertex rectangle polygon.
