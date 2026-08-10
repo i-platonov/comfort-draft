@@ -1,0 +1,15 @@
+{
+  // Deploy config for Cloudflare's Workers Builds flow, which runs `npx wrangler deploy`
+  // rather than uploading a directory the way classic Pages did.
+  //
+  // There is no Worker script here — no "main" — because nothing needs to run on request.
+  // Everything in dist/ is static, so Cloudflare serves it straight from its edge cache:
+  // the landing page at /, and the app at /app.
+  //
+  // Build command in the dashboard stays `npm run build`, which is what fills dist/.
+  "name": "ufhdesigner",
+  "compatibility_date": "2026-08-10",
+  "assets": {
+    "directory": "./dist"
+  }
+}

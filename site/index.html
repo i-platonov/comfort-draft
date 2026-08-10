@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!--
+  Landing page for ufhdesigner.com. The app is built separately and served from /app on
+  the same origin — see site/README.md. `npm run build` assembles both into dist/.
+-->
+
+<title>Underfloor Heating Designer — free UFH pipe layout planner</title>
+<meta name="description" content="Draw your rooms, set the pipe spacing, and get underfloor heating loops with real pipe lengths and heat output. Free, open source, runs in your browser.">
+<link rel="canonical" href="https://ufhdesigner.com/">
+<meta name="theme-color" content="#2563eb">
+<meta name="robots" content="index, follow">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Underfloor Heating Designer">
+<meta property="og:title" content="Underfloor Heating Designer — free UFH pipe layout planner">
+<meta property="og:description" content="Draw your rooms, set the pipe spacing, and get buildable underfloor heating loops with real pipe lengths and heat output. Free and open source.">
+<meta property="og:url" content="https://ufhdesigner.com/">
+<meta property="og:image" content="https://ufhdesigner.com/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A floor plan with underfloor heating loops drawn into four rooms.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Underfloor Heating Designer — free UFH pipe layout planner">
+<meta name="twitter:description" content="Draw your rooms, set the pipe spacing, and get buildable underfloor heating loops. Free and open source.">
+<meta name="twitter:image" content="https://ufhdesigner.com/og-image.png">
+
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-sunken: #f8fafc;
+    --bg-deep: #f1f5f9;
+    --border: #e2e8f0;
+    --text: #0f172a;
+    --text-muted: #475569;
+    --text-soft: #64748b;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --accent-soft: #eff6ff;
+    --pipe: #dc2626;
+    --pipe-alt: #2563eb;
+    --shadow: 0 1px 2px rgba(15, 23, 42, .06);
+    --shadow-lg: 0 12px 32px rgba(15, 23, 42, .10);
+    --radius: 12px;
+    --wrap: 1120px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b1220;
+      --bg-sunken: #111a2b;
+      --bg-deep: #0f172a;
+      --border: #1e293b;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --text-soft: #94a3b8;
+      --accent: #60a5fa;
+      --accent-hover: #93c5fd;
+      --accent-soft: #172554;
+      --pipe: #f87171;
+      --pipe-alt: #60a5fa;
+      --shadow-lg: 0 12px 32px rgba(0, 0, 0, .45);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { width: 100%; max-width: var(--wrap); margin: 0 auto; padding: 0 24px; }
+
+  a { color: var(--accent); }
+  h1, h2, h3 { line-height: 1.2; letter-spacing: -0.02em; margin: 0; }
+  h1 { font-size: clamp(2.1rem, 5vw, 3.4rem); font-weight: 800; }
+  h2 { font-size: clamp(1.5rem, 3vw, 2.1rem); font-weight: 700; }
+  h3 { font-size: 1.05rem; font-weight: 650; }
+  p { margin: 0; }
+
+  .skip {
+    position: absolute; left: -9999px; top: 0;
+    background: var(--accent); color: #fff; padding: 10px 16px; z-index: 100; border-radius: 0 0 8px 0;
+  }
+  .skip:focus { left: 0; }
+
+  /* ---------- header ---------- */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+  }
+  .bar { display: flex; align-items: center; gap: 20px; height: 64px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); text-decoration: none; letter-spacing: -0.01em; white-space: nowrap; }
+  .brand svg { width: 26px; height: 26px; flex: 0 0 auto; }
+  .brand-short { display: none; }
+  /* The full wordmark wraps to three lines beside the call to action on a phone. */
+  @media (max-width: 560px) {
+    .brand-long { display: none; }
+    .brand-short { display: inline; }
+    .bar { gap: 12px; }
+  }
+  nav { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  nav a.navlink { color: var(--text-muted); text-decoration: none; font-size: 15px; padding: 8px 12px; border-radius: 8px; }
+  nav a.navlink:hover { color: var(--text); background: var(--bg-sunken); }
+  @media (max-width: 720px) { nav a.navlink { display: none; } }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 11px 20px; border-radius: 10px;
+    font-size: 15px; font-weight: 600; text-decoration: none;
+    border: 1px solid transparent; cursor: pointer; white-space: nowrap;
+    transition: background .15s, border-color .15s, color .15s, transform .1s;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: var(--accent); color: #fff; box-shadow: var(--shadow); }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-ghost { background: transparent; color: var(--text); border-color: var(--border); }
+  .btn-ghost:hover { background: var(--bg-sunken); }
+  .btn-lg { padding: 15px 28px; font-size: 17px; border-radius: 12px; }
+  .btn svg { width: 18px; height: 18px; flex: 0 0 auto; }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 72px 0 56px; }
+  .hero-grid { display: grid; grid-template-columns: 1.05fr .95fr; gap: 56px; align-items: center; }
+  @media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; gap: 36px; } .hero { padding: 48px 0 40px; } }
+
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--accent); background: var(--accent-soft);
+    padding: 6px 12px; border-radius: 999px; margin-bottom: 20px;
+  }
+  .lede { font-size: 1.2rem; color: var(--text-muted); margin-top: 20px; max-width: 34em; }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+  .cta-note { margin-top: 16px; font-size: 14px; color: var(--text-soft); }
+
+  .plan {
+    background: var(--bg-sunken); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow-lg);
+  }
+  .plan svg { display: block; width: 100%; height: auto; }
+
+  /* ---------- generic sections ---------- */
+  section { padding: 72px 0; border-top: 1px solid var(--border); }
+  @media (max-width: 900px) { section { padding: 52px 0; } }
+  .section-head { max-width: 46em; margin-bottom: 44px; }
+  .section-head p { color: var(--text-muted); margin-top: 14px; }
+
+  .grid { display: grid; gap: 20px; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 900px) { .grid-3, .grid-4 { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .grid-3, .grid-4 { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--bg-sunken); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 24px;
+  }
+  .card h3 { margin-bottom: 8px; }
+  .card p { color: var(--text-muted); font-size: 15px; }
+  .card .ico {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 38px; height: 38px; border-radius: 10px;
+    background: var(--accent-soft); color: var(--accent); margin-bottom: 16px;
+  }
+  .card .ico svg { width: 20px; height: 20px; }
+
+  .steps { counter-reset: step; }
+  .step { position: relative; padding-left: 56px; }
+  .step::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; left: 0; top: 0;
+    width: 36px; height: 36px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--accent); color: #fff; font-weight: 700; font-size: 15px;
+  }
+  .step h3 { margin-bottom: 6px; }
+  .step p { color: var(--text-muted); font-size: 15px; }
+
+  .prose p { color: var(--text-muted); margin-top: 16px; max-width: 42em; }
+  .prose strong { color: var(--text); }
+
+  details {
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--bg-sunken); padding: 0 22px; margin-bottom: 12px;
+  }
+  details summary {
+    cursor: pointer; list-style: none; padding: 20px 0;
+    font-weight: 650; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::after {
+    content: ""; flex: 0 0 auto; width: 10px; height: 10px;
+    border-right: 2px solid var(--text-soft); border-bottom: 2px solid var(--text-soft);
+    transform: rotate(45deg) translateY(-2px); transition: transform .15s;
+  }
+  details[open] summary::after { transform: rotate(-135deg) translateY(-2px); }
+  details .answer { padding-bottom: 22px; color: var(--text-muted); font-size: 15.5px; }
+
+  .band {
+    background: var(--bg-deep); border-radius: 16px;
+    padding: 56px 40px; text-align: center;
+    display: flex; flex-direction: column; align-items: center; gap: 18px;
+  }
+  .band p { color: var(--text-muted); max-width: 34em; }
+
+  footer { border-top: 1px solid var(--border); padding: 40px 0; color: var(--text-soft); font-size: 14px; }
+  .foot { display: flex; flex-wrap: wrap; gap: 12px 28px; align-items: center; }
+  .foot a { color: var(--text-muted); text-decoration: none; }
+  .foot a:hover { color: var(--accent); text-decoration: underline; }
+  .foot .spacer { margin-left: auto; }
+</style>
+</head>
+
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header>
+  <div class="wrap bar">
+    <a class="brand" href="/">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 20h4a2 2 0 0 0 2-2V6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v12a2 2 0 0 0 2 2h4"/>
+        <path d="M3 12h3"/><path d="M18 12h3"/>
+      </svg>
+      <span class="brand-long">Underfloor Heating Designer</span>
+      <span class="brand-short">UFH Designer</span>
+    </a>
+    <nav>
+      <a class="navlink" href="#features">Features</a>
+      <a class="navlink" href="#how">How it works</a>
+      <a class="navlink" href="#faq">FAQ</a>
+      <a class="navlink" href="https://github.com/ArendJanKramer/underfloor-heating-designer">GitHub</a>
+      <a class="btn btn-primary" href="/app/">Open the app</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+  <div class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <span class="eyebrow">Free &amp; open source</span>
+        <h1>Plan underfloor heating loops that can actually be laid</h1>
+        <p class="lede">
+          Draw your rooms over a floor plan, set the pipe spacing, and get a counter-flow
+          spiral for every zone — with real pipe lengths, circuit-length warnings and heat
+          output per room. No sign-up, no upload, nothing to install.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary btn-lg" href="/app/">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+            Open the app
+          </a>
+          <a class="btn btn-ghost btn-lg" href="https://github.com/ArendJanKramer/underfloor-heating-designer">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.56-.29-5.25-1.28-5.25-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.12 3.05.74.81 1.18 1.84 1.18 3.1 0 4.43-2.69 5.4-5.26 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5Z"/></svg>
+            View the source
+          </a>
+        </div>
+        <p class="cta-note">
+          Runs entirely in your browser — your floor plan never leaves your computer.
+        </p>
+      </div>
+
+      <div class="plan">
+        <svg viewBox="-300 -300 10400 7200" role="img" aria-labelledby="plan-title plan-desc">
+          <title id="plan-title">Four rooms of a floor plan filled with underfloor heating pipe loops</title>
+          <desc id="plan-desc">A living room, kitchen, bathroom and hallway, each filled with a
+            counter-flow spiral of heating pipe running back to a manifold.</desc>
+          <g fill="var(--bg)" stroke="var(--border)" stroke-width="55">
+            <polygon points="0,0 5200,0 5200,4000 0,4000"/>
+            <polygon points="5600,0 9800,0 9800,1800 7490,1800 7490,4000 5600,4000"/>
+            <polygon points="0,4400 2400,4400 2400,6600 0,6600"/>
+            <polygon points="2800,4400 9800,4400 9800,6600 2800,6600"/>
+          </g>
+          <g fill="none" stroke-width="46" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M75 4000L75 175L83 137L104 104L137 83L175 75L5025 75L5063 83L5096 104L5117 137L5125 175L5125 3825L5117 3863L5096 3896L5063 3917L5025 3925L475 3925L437 3917L404 3896L383 3863L375 3825L375 475L383 437L404 404L437 383L475 375L4725 375L4763 383L4796 404L4817 437L4825 475L4825 3525L4817 3563L4796 3596L4763 3617L4725 3625L775 3625L737 3617L704 3596L683 3563L675 3525L675 775L683 737L704 704L737 683L775 675L4425 675L4463 683L4496 704L4517 737L4525 775L4525 3225L4517 3263L4496 3296L4463 3317L4425 3325L1075 3325L1037 3317L1004 3296L983 3263L975 3225L975 1075L983 1037L1004 1004L1037 983L1075 975L4125 975L4163 983L4196 1004L4217 1037L4225 1075L4225 2925L4217 2963L4196 2996L4163 3017L4125 3025L1375 3025L1337 3017L1304 2996L1283 2963L1275 2925L1275 1375L1283 1337L1304 1304L1337 1283L1375 1275L3825 1275L3863 1283L3896 1304L3917 1337L3925 1375L3925 2625L3917 2663L3896 2696L3863 2717L3825 2725L1675 2725L1637 2717L1604 2696L1583 2663L1575 2625L1575 1675L1583 1637L1604 1604L1637 1583L1675 1575L3525 1575L3563 1583L3596 1604L3617 1637L3625 1675L3625 2325L3617 2363L3596 2396L3563 2417L3525 2425L1975 2425L1937 2417L1904 2396L1883 2363L1875 2325L1883 2287L1904 2254L1937 2233L1975 2225L3375 2225L3413 2217L3446 2196L3467 2163L3475 2125L3475 1825L3467 1787L3446 1754L3413 1733L3375 1725L1825 1725L1787 1733L1754 1754L1733 1787L1725 1825L1725 2475L1733 2513L1754 2546L1787 2567L1825 2575L3675 2575L3713 2567L3746 2546L3767 2513L3775 2475L3775 1525L3767 1487L3746 1454L3713 1433L3675 1425L1525 1425L1487 1433L1454 1454L1433 1487L1425 1525L1425 2775L1433 2813L1454 2846L1487 2867L1525 2875L3975 2875L4013 2867L4046 2846L4067 2813L4075 2775L4075 1225L4067 1187L4046 1154L4013 1133L3975 1125L1225 1125L1187 1133L1154 1154L1133 1187L1125 1225L1125 3075L1133 3113L1154 3146L1187 3167L1225 3175L4275 3175L4313 3167L4346 3146L4367 3113L4375 3075L4375 925L4367 887L4346 854L4313 833L4275 825L925 825L887 833L854 854L833 887L825 925L825 3375L833 3413L854 3446L887 3467L925 3475L4575 3475L4613 3467L4646 3446L4667 3413L4675 3375L4675 625L4667 587L4646 554L4613 533L4575 525L625 525L587 533L554 554L533 587L525 625L525 3675L533 3713L554 3746L587 3767L625 3775L4875 3775L4913 3767L4946 3746L4967 3713L4975 3675L4975 325L4967 287L4946 254L4913 233L4875 225L325 225L287 233L254 254L233 287L225 325L225 4000" stroke="var(--pipe)"/>
+            <path d="M5675 4000L5675 175L5683 137L5704 104L5737 83L5775 75L9625 75L9663 83L9696 104L9717 137L9725 175L9725 1625L9717 1663L9696 1696L9663 1717L9625 1725L7515 1725L7477 1733L7444 1754L7423 1787L7415 1825L7415 3825L7407 3863L7386 3896L7353 3917L7315 3925L6075 3925L6037 3917L6004 3896L5983 3863L5975 3825L5975 475L5983 437L6004 404L6037 383L6075 375L9325 375L9363 383L9396 404L9417 437L9425 475L9425 1325L9417 1363L9396 1396L9363 1417L9325 1425L7215 1425L7177 1433L7144 1454L7123 1487L7115 1525L7115 3525L7107 3563L7086 3596L7053 3617L7015 3625L6375 3625L6337 3617L6304 3596L6283 3563L6275 3525L6275 775L6283 737L6304 704L6337 683L6375 675L9025 675L9063 683L9096 704L9117 737L9125 775L9125 1025L9117 1063L9096 1096L9063 1117L9025 1125L6915 1125L6877 1133L6844 1154L6823 1187L6815 1225L6815 3225L6807 3263L6786 3296L6753 3317L6715 3325L6677 3317L6644 3296L6623 3263L6615 3225L6615 1075L6623 1037L6644 1004L6677 983L6715 975L8900 975L8929 969L8953 953L8969 929L8975 900L8969 871L8953 847L8929 831L8900 825L6525 825L6487 833L6454 854L6433 887L6425 925L6425 3375L6433 3413L6454 3446L6487 3467L6525 3475L6865 3475L6903 3467L6936 3446L6957 3413L6965 3375L6965 1375L6973 1337L6994 1304L7027 1283L7065 1275L9175 1275L9213 1267L9246 1246L9267 1213L9275 1175L9275 625L9267 587L9246 554L9213 533L9175 525L6225 525L6187 533L6154 554L6133 587L6125 625L6125 3675L6133 3713L6154 3746L6187 3767L6225 3775L7165 3775L7203 3767L7236 3746L7257 3713L7265 3675L7265 1675L7273 1637L7294 1604L7327 1583L7365 1575L9475 1575L9513 1567L9546 1546L9567 1513L9575 1475L9575 325L9567 287L9546 254L9513 233L9475 225L5925 225L5887 233L5854 254L5833 287L5825 325L5825 4000" stroke="var(--pipe-alt)"/>
+            <path d="M50 6600L50 4550L58 4512L79 4479L112 4458L150 4450L2250 4450L2288 4458L2321 4479L2342 4512L2350 4550L2350 6450L2342 6488L2321 6521L2288 6542L2250 6550L350 6550L312 6542L279 6521L258 6488L250 6450L250 4750L258 4712L279 4679L312 4658L350 4650L2050 4650L2088 4658L2121 4679L2142 4712L2150 4750L2150 6250L2142 6288L2121 6321L2088 6342L2050 6350L550 6350L512 6342L479 6321L458 6288L450 6250L450 4950L458 4912L479 4879L512 4858L550 4850L1850 4850L1888 4858L1921 4879L1942 4912L1950 4950L1950 6050L1942 6088L1921 6121L1888 6142L1850 6150L750 6150L712 6142L679 6121L658 6088L650 6050L650 5150L658 5112L679 5079L712 5058L750 5050L1650 5050L1688 5058L1721 5079L1742 5112L1750 5150L1750 5850L1742 5888L1721 5921L1688 5942L1650 5950L950 5950L912 5942L879 5921L858 5888L850 5850L850 5350L858 5312L879 5279L912 5258L950 5250L1450 5250L1488 5258L1521 5279L1542 5312L1550 5350L1550 5650L1542 5688L1521 5721L1488 5742L1450 5750L1150 5750L1112 5742L1079 5721L1058 5688L1050 5650L1058 5612L1079 5579L1112 5558L1150 5550L1350 5550L1388 5542L1421 5521L1442 5488L1450 5450L1442 5412L1421 5379L1388 5358L1350 5350L1050 5350L1012 5358L979 5379L958 5412L950 5450L950 5750L958 5788L979 5821L1012 5842L1050 5850L1550 5850L1588 5842L1621 5821L1642 5788L1650 5750L1650 5250L1642 5212L1621 5179L1588 5158L1550 5150L850 5150L812 5158L779 5179L758 5212L750 5250L750 5950L758 5988L779 6021L812 6042L850 6050L1750 6050L1788 6042L1821 6021L1842 5988L1850 5950L1850 5050L1842 5012L1821 4979L1788 4958L1750 4950L650 4950L612 4958L579 4979L558 5012L550 5050L550 6150L558 6188L579 6221L612 6242L650 6250L1950 6250L1988 6242L2021 6221L2042 6188L2050 6150L2050 4850L2042 4812L2021 4779L1988 4758L1950 4750L450 4750L412 4758L379 4779L358 4812L350 4850L350 6350L358 6388L379 6421L412 6442L450 6450L2150 6450L2188 6442L2221 6421L2242 6388L2250 6350L2250 4650L2242 4612L2221 4579L2188 4558L2150 4550L250 4550L212 4558L179 4579L158 4612L150 4650L150 6600" stroke="var(--pipe)"/>
+            <path d="M2900 6600L2900 4600L2908 4562L2929 4529L2962 4508L3000 4500L9600 4500L9638 4508L9671 4529L9692 4562L9700 4600L9700 6400L9692 6438L9671 6471L9638 6492L9600 6500L3400 6500L3362 6492L3329 6471L3308 6438L3300 6400L3300 5000L3308 4962L3329 4929L3362 4908L3400 4900L9200 4900L9238 4908L9271 4929L9292 4962L9300 5000L9300 6000L9292 6038L9271 6071L9238 6092L9200 6100L3800 6100L3762 6092L3729 6071L3708 6038L3700 6000L3700 5400L3708 5362L3729 5329L3762 5308L3800 5300L8800 5300L8838 5308L8871 5329L8892 5362L8900 5400L8892 5438L8871 5471L8838 5492L8800 5500L4000 5500L3962 5508L3929 5529L3908 5562L3900 5600L3900 5800L3908 5838L3929 5871L3962 5892L4000 5900L9000 5900L9038 5892L9071 5871L9092 5838L9100 5800L9100 5200L9092 5162L9071 5129L9038 5108L9000 5100L3600 5100L3562 5108L3529 5129L3508 5162L3500 5200L3500 6200L3508 6238L3529 6271L3562 6292L3600 6300L9400 6300L9438 6292L9471 6271L9492 6238L9500 6200L9500 4800L9492 4762L9471 4729L9438 4708L9400 4700L3200 4700L3162 4708L3129 4729L3108 4762L3100 4800L3100 6600" stroke="var(--pipe-alt)"/>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <section id="features">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Everything you need to lay out a floor</h2>
+        <p>
+          It does the fiddly part — filling an awkward room shape with pipe at an even spacing —
+          and then tells you what that costs you in metres and watts.
+        </p>
+      </div>
+
+      <div class="grid grid-3">
+        <div class="card">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z"/><path d="M15 5.764v15"/><path d="M9 3.236v15"/></svg></span>
+          <h3>Import your floor plan</h3>
+          <p>Drop in a PNG, JPG, WEBP or GIF scan — or a DXF. Calibrate it against a known
+            distance and every zone you draw is true to size.</p>
+        </div>
+
+        <div class="card">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z"/></svg></span>
+          <h3>Draw rooms, not rectangles</h3>
+          <p>Click out any L, T or U-shaped room, or snap a quick rectangle. Drag the vertices
+            afterwards and the pipework redraws itself.</p>
+        </div>
+
+        <div class="card">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0"/><path d="M17 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0"/><path d="M13 12a1 1 0 1 1-2 0 1 1 0 0 1 2 0"/></svg></span>
+          <h3>Counter-flow spirals</h3>
+          <p>Supply and return wind in together so a hot pass always sits beside a cool one —
+            the layout that gives you an even floor rather than a warm end and a cold end.</p>
+        </div>
+
+        <div class="card">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.3 8.7 8.7 21.3a2.4 2.4 0 0 1-3.4 0l-2.6-2.6a2.4 2.4 0 0 1 0-3.4L15.3 2.7a2.4 2.4 0 0 1 3.4 0l2.6 2.6a2.4 2.4 0 0 1 0 3.4"/><path d="m7.5 10.5 2 2"/><path d="m10.5 7.5 2 2"/><path d="m13.5 4.5 2 2"/><path d="m4.5 13.5 2 2"/></svg></span>
+          <h3>Bends the pipe can take</h3>
+          <p>Every corner and the turn in the middle are held to the pipe's minimum bend radius,
+            so what you see on screen is a shape a fitter can actually form by hand.</p>
+        </div>
+
+        <div class="card">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" x2="16" y1="12" y2="12"/></svg></span>
+          <h3>Manifold &amp; leader runs</h3>
+          <p>Place the manifold, route each zone's supply and return back to it, and the leader
+            length is counted into the circuit like any other metre of pipe.</p>
+        </div>
+
+        <div class="card">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.3 15.3 8.7 2.7a2.4 2.4 0 0 0-3.4 0L2.7 5.3a2.4 2.4 0 0 0 0 3.4l12.6 12.6a2.4 2.4 0 0 0 3.4 0l2.6-2.6a2.4 2.4 0 0 0 0-3.4"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/></svg></span>
+          <h3>Lengths and circuit limits</h3>
+          <p>Spiral, leader and total metres per zone, checked against your maximum circuit
+            length — so you find out a room needs splitting before you buy the pipe.</p>
+        </div>
+
+        <div class="card">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v8"/><path d="m4.93 10.93 1.41 1.41"/><path d="M2 18h2"/><path d="M20 18h2"/><path d="m19.07 10.93-1.41 1.41"/><path d="M22 22H2"/><path d="m8 6 4-4 4 4"/><path d="M16 18a4 4 0 0 0-8 0"/></svg></span>
+          <h3>Heat output per room</h3>
+          <p>Set supply and return temperatures and the flow rate, and read off watts and
+            W/m² for each zone plus the total flow the manifold has to carry.</p>
+        </div>
+
+        <div class="card">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg></span>
+          <h3>Your work, your machine</h3>
+          <p>Nothing is uploaded and there is no account. Save a project to a file when you
+            want to keep it or hand it to someone else.</p>
+        </div>
+
+        <div class="card">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg></span>
+          <h3>Open source</h3>
+          <p>The whole thing is on GitHub — read how the pipe routing works, file an issue,
+            or run your own copy.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>From floor plan to pipe schedule in four steps</h2>
+      </div>
+      <div class="grid grid-4 steps">
+        <div class="step">
+          <h3>Import and calibrate</h3>
+          <p>Load your plan and click two points a known distance apart. Everything after that
+            is in real millimetres.</p>
+        </div>
+        <div class="step">
+          <h3>Place the manifold</h3>
+          <p>Drop it where the cabinet will go. Every zone's leaders route back to it.</p>
+        </div>
+        <div class="step">
+          <h3>Draw your zones</h3>
+          <p>Outline each room and pick its pipe spacing — tighter in bathrooms and along cold
+            walls, wider where output matters less.</p>
+        </div>
+        <div class="step">
+          <h3>Read off the numbers</h3>
+          <p>Pipe length per circuit, warnings where a loop runs too long, and the heat output
+            each room will give you.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="under-the-hood">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Why the loops look the way they do</h2>
+      </div>
+      <div class="prose">
+        <p>
+          Each zone is filled with a <strong>counter-flow spiral</strong>: the supply winds
+          inward and the return winds back out through the gaps it left, so the two lanes
+          alternate across the floor. A pass that has just left the manifold sits next to one
+          that is on its way back, which evens out the surface temperature instead of leaving
+          the far end of the room noticeably cooler than the near end.
+        </p>
+        <p>
+          The other half of the problem is that pipe does not bend to a point. Every corner is
+          formed at the <strong>pipe's minimum bend radius</strong> — 100&nbsp;mm suits the usual
+          16&nbsp;mm PEX-AL-PEX — and so is the 180° turn in the middle of the spiral. That turn
+          is the awkward one: no half-turn at that radius fits between two passes closer together
+          than twice it, so at ordinary spacings the last two passes are opened out until the
+          turn can be the plain half circle it should be.
+        </p>
+        <p>
+          The layout follows the actual room outline rather than its bounding box, so an L-shaped
+          or U-shaped room is filled along its real walls, and each ring stops where the shape
+          stops.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Questions</h2>
+      </div>
+
+      <details open>
+        <summary>Is it really free?</summary>
+        <div class="answer">Yes. It is free to use and the source is published on GitHub. There
+          is no account, no paid tier and no trial.</div>
+      </details>
+
+      <details>
+        <summary>Do I need to install anything?</summary>
+        <div class="answer">No. It runs in the browser — open the app and start drawing. It works
+          on any modern desktop browser; a large screen helps, as you are drawing over a floor plan.</div>
+      </details>
+
+      <details>
+        <summary>Does my floor plan get uploaded anywhere?</summary>
+        <div class="answer">No. The plan you import and the zones you draw stay in your browser.
+          Saving a project writes a file to your own computer, and loading one reads it back.</div>
+      </details>
+
+      <details>
+        <summary>What pipe spacing should I use?</summary>
+        <div class="answer">100–200&nbsp;mm covers most work: around 100&nbsp;mm in bathrooms and
+          along cold external walls where you want more output, 150–200&nbsp;mm through the middle
+          of ordinary rooms. You can set it per zone and watch the length and heat output change.</div>
+      </details>
+
+      <details>
+        <summary>How long can one circuit be?</summary>
+        <div class="answer">That is yours to set — put your maximum in the settings and any zone
+          that exceeds it is flagged. For 16&nbsp;mm pipe, a limit somewhere between 80 and
+          120&nbsp;m per loop is typical; check what your manifold and pump can carry.</div>
+      </details>
+
+      <details>
+        <summary>Can I import a DXF?</summary>
+        <div class="answer">Yes — <code>LINE</code>, <code>LWPOLYLINE</code>, <code>POLYLINE</code>,
+          <code>CIRCLE</code> and <code>ARC</code> entities are read. If a DXF comes in empty, its
+          exporter has probably used entity types outside that set; importing a screenshot of the
+          plan as an image works just as well.</div>
+      </details>
+
+      <details>
+        <summary>Does it replace a proper heat-loss calculation?</summary>
+        <div class="answer">No. It tells you what a given layout will give you at a given flow
+          temperature; it does not work out what each room needs. Size your system from a heat-loss
+          calculation and use this to lay the pipe that meets it.</div>
+      </details>
+
+      <details>
+        <summary>Can I contribute or run my own copy?</summary>
+        <div class="answer">Please do — the repository is on
+          <a href="https://github.com/ArendJanKramer/underfloor-heating-designer">GitHub</a>.
+          It is a React, TypeScript and Vite app; <code>npm install</code> then
+          <code>npm run dev</code> gets you running locally.</div>
+      </details>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="band">
+        <h2>Lay out your first floor in a few minutes</h2>
+        <p>Nothing to install, nothing to sign up for. Import a plan, draw a room, and see the
+          pipework appear.</p>
+        <a class="btn btn-primary btn-lg" href="/app/">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          Open the app
+        </a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <span>Underfloor Heating Designer — free and open source.</span>
+    <span class="spacer"></span>
+    <a href="/app/">Open the app</a>
+    <a href="https://github.com/ArendJanKramer/underfloor-heating-designer">GitHub</a>
+    <a href="#faq">FAQ</a>
+  </div>
+</footer>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Underfloor Heating Designer",
+  "url": "https://ufhdesigner.com/",
+  "applicationCategory": "DesignApplication",
+  "applicationSubCategory": "Underfloor heating layout",
+  "operatingSystem": "Any (web browser)",
+  "description": "Free, open-source tool for designing underfloor heating loops: draw rooms over a floor plan, set the pipe spacing, and get counter-flow spirals with pipe lengths, circuit-length warnings and heat output per zone.",
+  "image": "https://ufhdesigner.com/og-image.png",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "EUR"
+  },
+  "isAccessibleForFree": true,
+  "license": "https://github.com/ArendJanKramer/underfloor-heating-designer",
+  "codeRepository": "https://github.com/ArendJanKramer/underfloor-heating-designer",
+  "featureList": [
+    "Import a floor plan as an image or DXF and calibrate it to scale",
+    "Draw rectangular and freeform polygon heating zones",
+    "Counter-flow spiral pipe layout that respects the pipe's minimum bend radius",
+    "Per-zone pipe spacing and edge padding",
+    "Manifold placement and leader routing",
+    "Pipe length per circuit with maximum circuit length warnings",
+    "Heat output and flow rate per zone",
+    "Save and load projects as a local file"
+  ]
+}
+</script>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Is it really free?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. It is free to use and the source is published on GitHub. There is no account, no paid tier and no trial." }
+    },
+    {
+      "@type": "Question",
+      "name": "Do I need to install anything?",
+      "acceptedAnswer": { "@type": "Answer", "text": "No. It runs in the browser — open the app and start drawing. It works on any modern desktop browser." }
+    },
+    {
+      "@type": "Question",
+      "name": "Does my floor plan get uploaded anywhere?",
+      "acceptedAnswer": { "@type": "Answer", "text": "No. The plan you import and the zones you draw stay in your browser. Saving a project writes a file to your own computer, and loading one reads it back." }
+    },
+    {
+      "@type": "Question",
+      "name": "What pipe spacing should I use for underfloor heating?",
+      "acceptedAnswer": { "@type": "Answer", "text": "100–200 mm covers most work: around 100 mm in bathrooms and along cold external walls where you want more output, 150–200 mm through the middle of ordinary rooms." }
+    },
+    {
+      "@type": "Question",
+      "name": "How long can one underfloor heating circuit be?",
+      "acceptedAnswer": { "@type": "Answer", "text": "You set the maximum and any zone that exceeds it is flagged. For 16 mm pipe, a limit somewhere between 80 and 120 m per loop is typical; check what your manifold and pump can carry." }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I import a DXF floor plan?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes — LINE, LWPOLYLINE, POLYLINE, CIRCLE and ARC entities are read. If a DXF comes in empty, importing a screenshot of the plan as an image works just as well." }
+    },
+    {
+      "@type": "Question",
+      "name": "Does it replace a heat-loss calculation?",
+      "acceptedAnswer": { "@type": "Answer", "text": "No. It tells you what a given layout will give you at a given flow temperature; it does not work out what each room needs. Size your system from a heat-loss calculation and use this to lay the pipe that meets it." }
+    }
+  ]
+}
+</script>
+</body>
+</html>
