@@ -22,6 +22,7 @@ import {
   projectPointOntoManifold,
 } from '../geometry/manifoldRouting';
 import { isAxisAlignedRect, resizeRectFromCorner } from '../geometry/rect';
+import { DEFAULT_PIPE_OUTER_DIAMETER_MM } from '../geometry/heat';
 import { dxfBoundingBox } from '../geometry/dxfHelpers';
 import { ZONE_COLORS } from '../theme';
 import {
@@ -75,6 +76,8 @@ interface StoreState {
   returnTempC: number;
   /** Loop flow rate, in L/min per 100m of pipe — scales each zone's flow by its own circuit length. */
   flowLpmPer100m: number;
+  /** Outside diameter of the loop tube, mm. The wall is taken as 2 mm, as on the common sizes. */
+  pipeOuterDiameterMm: number;
   /** Discriminated-union background layer (DXF or raster image, or null) */
   background: Background | null;
   zones: Zone[];
@@ -167,6 +170,7 @@ interface StoreState {
   setSupplyTempC: (celsius: number) => void;
   setReturnTempC: (celsius: number) => void;
   setFlowLpmPer100m: (lpm: number) => void;
+  setPipeOuterDiameter: (mm: number) => void;
   /**
    * Place a tape-measure end. The first click starts a reading, the second completes it,
    * and a third starts a fresh one — so repeated measurements need no reset in between.
@@ -205,6 +209,7 @@ export interface PersistedStoreState {
   supplyTempC: number;
   returnTempC: number;
   flowLpmPer100m: number;
+  pipeOuterDiameterMm: number;
   background: Background | null;
   zones: PersistedZone[];
   manifold: Manifold | null;
@@ -701,6 +706,7 @@ export function partializeStoreState(state: StoreState): PersistedStoreState {
     supplyTempC: state.supplyTempC,
     returnTempC: state.returnTempC,
     flowLpmPer100m: state.flowLpmPer100m,
+    pipeOuterDiameterMm: state.pipeOuterDiameterMm,
     background: state.background,
     zones: state.zones.map(toPersistedZone),
     manifold: state.manifold,
@@ -724,6 +730,11 @@ export function mergePersistedStoreState(
   const merged = {
     ...currentState,
     ...persisted,
+    // Drawings saved before pipe size was a setting predate 18x2 tube, so they get 16x2.
+    pipeOuterDiameterMm:
+      typeof persisted.pipeOuterDiameterMm === 'number' && persisted.pipeOuterDiameterMm > 0
+        ? persisted.pipeOuterDiameterMm
+        : DEFAULT_PIPE_OUTER_DIAMETER_MM,
     manifold: normalizeManifold(persisted.manifold ?? currentState.manifold),
     zones: hydratedZones,
   };
@@ -745,6 +756,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   supplyTempC: 40,
   returnTempC: 35,
   flowLpmPer100m: 2,
+  pipeOuterDiameterMm: DEFAULT_PIPE_OUTER_DIAMETER_MM,
   background: null,
   zones: [],
   manifold: null,
@@ -1171,6 +1183,8 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   setReturnTempC: (celsius) => set({ returnTempC: celsius }),
 
   setFlowLpmPer100m: (lpm) => set({ flowLpmPer100m: lpm }),
+
+  setPipeOuterDiameter: (mm) => set({ pipeOuterDiameterMm: mm }),
 
   addMeasurePoint: (pt) => {
     const { measurement } = get();

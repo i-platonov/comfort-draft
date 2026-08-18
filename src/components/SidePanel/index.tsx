@@ -19,6 +19,7 @@ import { parseDxfEntities, placeDxfInDrawing } from '../../geometry/dxfHelpers';
 import { mmToMeters } from '../../geometry/length';
 import { UFH_STORE_STORAGE_KEY, partializeStoreState, useStore } from '../../state/store';
 import HeatTab from './HeatTab';
+import { COMMON_PIPE_OUTER_DIAMETERS_MM, PIPE_WALL_MM } from '../../geometry/heat';
 import ZoneCard from './ZoneCard';
 
 const PROJECT_STORAGE_VERSION = 0;
@@ -40,6 +41,8 @@ export default function SidePanel() {
         calibration,
         maxCircuitLengthM,
         defaultSpacingMm,
+        pipeOuterDiameterMm,
+        setPipeOuterDiameter,
         background,
         toolMode,
         setToolMode,
@@ -353,6 +356,20 @@ export default function SidePanel() {
                                 onChange={(event) => setDefaultSpacing(Number(event.target.value))}
                             />
                             <span>mm</span>
+                        </div>
+                        <div className="setting-row">
+                            <label>Pipe size:</label>
+                            <select
+                                className="zone-select"
+                                value={pipeOuterDiameterMm}
+                                onChange={(event) => setPipeOuterDiameter(Number(event.target.value))}
+                            >
+                                {COMMON_PIPE_OUTER_DIAMETERS_MM.map((od) => (
+                                    <option key={od} value={od}>
+                                        {od}&times;{PIPE_WALL_MM} mm
+                                    </option>
+                                ))}
+                            </select>
                         </div>
                         <div className="setting-row">
                             <label>Manifold angle:</label>
