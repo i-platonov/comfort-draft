@@ -11,8 +11,6 @@ function useToolHint(): string | null {
       return 'Click to add points. Double-click or Enter to close.';
     case 'drawRect':
       return 'Click first corner, then click opposite corner to create a rectangle zone.';
-    case 'placeManifold':
-      return 'Click on canvas to place the manifold.';
     case 'measure':
       return 'Click two points to measure the distance between them. Esc clears the tape.';
     case 'panBackground':
@@ -27,7 +25,7 @@ function useToolHint(): string | null {
 }
 
 export default function TopToolbar() {
-  const manifold = useStore((state) => state.manifold);
+  const manifoldCount = useStore((state) => state.manifolds.length);
   const hint = useToolHint();
 
   return (
@@ -35,7 +33,11 @@ export default function TopToolbar() {
       <Toolbar />
       <div className="top-toolbar-status">
         {hint && <span className="toolbar-hint">{hint}</span>}
-        {manifold && <span className="toolbar-hint success"><Check /> Manifold placed</span>}
+        {manifoldCount > 0 && (
+          <span className="toolbar-hint success">
+            <Check /> {manifoldCount} manifold{manifoldCount === 1 ? '' : 's'} placed
+          </span>
+        )}
       </div>
     </div>
   );

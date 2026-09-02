@@ -39,6 +39,9 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
     updateZoneName,
     setToolMode,
   } = useStore();
+  const connectedManifoldName = useStore(
+    (state) => state.manifolds.find((manifold) => manifold.id === zone.manifoldId)?.name,
+  );
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(zone.name);
 
@@ -176,6 +179,10 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
           ))}
         </div>
       </div>
+
+      <p className="info" style={{ fontSize: '0.75rem' }}>
+        {connectedManifoldName ? `Manifold: ${connectedManifoldName}` : 'Not connected to a manifold'}
+      </p>
 
       <div className={`zone-lengths ${isOverLimit ? 'over-limit' : ''}`}>
         <div className="length-row">

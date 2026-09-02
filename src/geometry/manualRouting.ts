@@ -454,18 +454,19 @@ export function buildLeaderRenderLines(
 
 /**
  * Resolve every zone's manually-drawn leader waypoints into a full render/length
- * path, anchoring the ends dynamically to the zone's current spiral and the
- * manifold's current port layout.
+ * path, anchoring the ends dynamically to the zone's current spiral and its own
+ * manifold's current port layout. Zones not yet connected to any manifold (or
+ * connected to one that's since been deleted) are skipped.
  */
 export function buildManualLeaderPaths(
   zones: Zone[],
-  manifold: Manifold | null,
+  manifolds: Manifold[],
 ): ManualLeaderPaths[] {
-  if (!manifold) return [];
-
   const results: ManualLeaderPaths[] = [];
   for (const zone of zones) {
-    if (!zone.spiral || zone.spiral.length < 2) continue;
+    if (!zone.manifoldId || !zone.spiral || zone.spiral.length < 2) continue;
+    const manifold = manifolds.find((candidate) => candidate.id === zone.manifoldId);
+    if (!manifold) continue;
     const stubs = getSpiralStubs(zone.spiral);
     if (!stubs) continue;
     const pair = getZoneManifoldPorts(manifold, zone);

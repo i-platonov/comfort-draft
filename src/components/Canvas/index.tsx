@@ -43,7 +43,7 @@ export default function Canvas() {
     background,
     zones,
     selectedZoneId,
-    manifold,
+    manifolds,
     toolMode,
     drawingPoints,
     drawRectStart,
@@ -53,7 +53,6 @@ export default function Canvas() {
     pxPerMm,
     stageX,
     stageY,
-    setManifold,
     addDrawingPoint,
     closeZone,
     startDrawRect,
@@ -63,6 +62,7 @@ export default function Canvas() {
     addMeasurePoint,
     setStageTransform,
     selectZone,
+    selectManifold,
     setToolMode,
     moveBackground,
   } = useStore();
@@ -108,11 +108,6 @@ export default function Canvas() {
     const position = getPointerPos();
     if (!position) return;
 
-    if (toolMode === 'placeManifold') {
-      setManifold(position);
-      return;
-    }
-
     if (toolMode === 'drawZone') {
       addDrawingPoint(position);
       return;
@@ -148,6 +143,7 @@ export default function Canvas() {
     // Clicked empty canvas: finalize any boundary edit and deselect.
     if (toolMode === 'select' || toolMode === 'editBoundary') {
       selectZone(null);
+      selectManifold(null);
       if (toolMode === 'editBoundary') {
         setToolMode('select');
       }
@@ -163,7 +159,7 @@ export default function Canvas() {
     getPointerPos,
     routing,
     selectZone,
-    setManifold,
+    selectManifold,
     setToolMode,
     startDrawRect,
     toolMode,
@@ -246,7 +242,6 @@ export default function Canvas() {
     calibration.active ||
     toolMode === 'drawZone' ||
     toolMode === 'drawRect' ||
-    toolMode === 'placeManifold' ||
     toolMode === 'routeLeader' ||
     toolMode === 'measure'
       ? 'crosshair'
@@ -350,8 +345,8 @@ export default function Canvas() {
         toolMode={toolMode}
         pxPerMm={pxPerMm}
       />
-      <LeaderLayer zones={zones} manifold={manifold} pxPerMm={pxPerMm} />
-      <ManifoldLayer manifold={manifold} zones={zones} pxPerMm={pxPerMm} />
+      <LeaderLayer zones={zones} manifolds={manifolds} pxPerMm={pxPerMm} />
+      <ManifoldLayer manifolds={manifolds} zones={zones} pxPerMm={pxPerMm} />
       <MeasureLayer measurement={measurement} pointer={mousePos} pxPerMm={pxPerMm} />
 
       <Layer>

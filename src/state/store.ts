@@ -82,7 +82,8 @@ interface StoreState {
   background: Background | null;
   zones: Zone[];
   selectedZoneId: string | null;
-  manifold: Manifold | null;
+  manifolds: Manifold[];
+  selectedManifoldId: string | null;
   toolMode: ToolMode;
   drawingPoints: Point[];
   /** First corner for rectangle-zone drawing */
@@ -103,9 +104,14 @@ interface StoreState {
    */
   moveBackground: (deltaX: number, deltaY: number) => void;
   setToolMode: (mode: ToolMode) => void;
-  setManifold: (pos: Point) => void;
-  updateManifoldPosition: (pos: Point) => void;
-  setManifoldRotation: (rotationDeg: number) => void;
+  /** Add a new manifold near existing content (or the origin, if the drawing is empty). */
+  addManifold: () => void;
+  /** Remove a manifold and clear routing for every zone that was connected to it. */
+  deleteManifold: (id: string) => void;
+  selectManifold: (id: string | null) => void;
+  updateManifoldName: (id: string, name: string) => void;
+  updateManifoldPosition: (id: string, pos: Point) => void;
+  setManifoldRotation: (id: string, rotationDeg: number) => void;
   addDrawingPoint: (pt: Point) => void;
   closeZone: () => void;
   cancelDrawing: () => void;
@@ -124,10 +130,11 @@ interface StoreState {
   updateZoneVertex: (zoneId: string, vertexIdx: number, pt: Point) => void;
   /** Begin (or restart) manual leader routing for a zone. */
   startRouteZone: (zoneId: string) => void;
-  /** Add a click to the in-progress leader path; finishes routing automatically if the click lands on the manifold. */
+  /**
+   * Add a click to the in-progress leader path; finishes routing automatically — and
+   * assigns the zone to that manifold — if the click lands on any manifold.
+   */
   addRoutePoint: (pt: Point) => void;
-  /** Commit the drawn leader path, connecting it into the manifold point the user clicked. */
-  finishRouting: (clickPos: Point) => void;
   /** Abandon the in-progress route without saving it. */
   cancelRouting: () => void;
   /** Drag a single waypoint of an already-drawn leader path; adjacent bends are repaired to stay orthogonal. */
@@ -199,6 +206,7 @@ export type PersistedZone = Pick<
   | 'startDirection'
   | 'leaderWaypoints'
   | 'manifoldPortOffsetMm'
+  | 'manifoldId'
 >;
 
 export interface PersistedStoreState {
@@ -212,16 +220,18 @@ export interface PersistedStoreState {
   pipeOuterDiameterMm: number;
   background: Background | null;
   zones: PersistedZone[];
-  manifold: Manifold | null;
+  manifolds: Manifold[];
 }
 
 export const UFH_STORE_STORAGE_KEY = 'ufh-designer-store';
 
 let zoneCounter = 1;
+let manifoldCounter = 1;
 
 function createTransientState(): Pick<
   StoreState,
   | 'selectedZoneId'
+  | 'selectedManifoldId'
   | 'toolMode'
   | 'drawingPoints'
   | 'drawRectStart'
@@ -231,6 +241,7 @@ function createTransientState(): Pick<
 > {
   return {
     selectedZoneId: null,
+    selectedManifoldId: null,
     toolMode: 'select',
     drawingPoints: [],
     drawRectStart: null,
@@ -244,21 +255,22 @@ function createTransientState(): Pick<
  * Recompute spirals for freshly-hydrated zones, keeping their persisted manual
  * leader waypoints intact, then re-derive `leaderLengthMm` (also derived data,
  * not persisted) from those waypoints against the current stub/port geometry.
+ * Each zone resolves its own manifold via `manifoldId` — they needn't share one.
  */
 function recomputeZones(
   zones: Zone[],
-  manifold: Manifold | null,
+  manifolds: Manifold[],
 ): Zone[] {
-  const withSpirals = zones.map((zone) =>
-    recomputeSpiral(zone, manifold, { preserveLeaderRouting: true }),
-  );
-
-  if (!manifold) return withSpirals;
+  const withSpirals = zones.map((zone) => {
+    const manifold = manifolds.find((candidate) => candidate.id === zone.manifoldId) ?? null;
+    return recomputeSpiral(zone, manifold, { preserveLeaderRouting: true });
+  });
 
   return withSpirals.map((zone) => {
     if (!zone.leaderWaypoints) return zone;
+    const manifold = manifolds.find((candidate) => candidate.id === zone.manifoldId) ?? null;
     const stubs = zone.spiral ? getSpiralStubs(zone.spiral) : null;
-    const pair = getZoneManifoldPorts(manifold, zone);
+    const pair = manifold ? getZoneManifoldPorts(manifold, zone) : null;
     if (!stubs || !pair) return { ...zone, leaderLengthMm: 0 };
 
     const fullPath = assembleLeaderPath(
@@ -304,12 +316,12 @@ function scaleBackgroundAbout(background: Background, factor: number, anchor: Po
  * framing the view. Null when the drawing is empty and there's nothing to frame.
  */
 function getDrawingBoundsMm(
-  state: Pick<StoreState, 'zones' | 'manifold' | 'background'>,
+  state: Pick<StoreState, 'zones' | 'manifolds' | 'background'>,
 ): { minX: number; minY: number; maxX: number; maxY: number } | null {
   const points: Point[] = [];
 
   for (const zone of state.zones) points.push(...zone.polygon.points);
-  if (state.manifold) points.push(state.manifold.position);
+  for (const manifold of state.manifolds) points.push(manifold.position);
 
   const { background } = state;
   if (background?.kind === 'image') {
@@ -338,11 +350,12 @@ function getDrawingBoundsMm(
   };
 }
 
-/** Clear a zone's manual leader routing (and chosen manifold outlet) — used whenever the manifold or spiral geometry moves. */
+/** Clear a zone's manual leader routing (and chosen manifold/outlet) — used whenever the manifold or spiral geometry moves, or the manifold it was connected to is deleted. */
 function clearZoneLeaderRouting(zone: Zone): Zone {
   if (
     zone.leaderWaypoints === null &&
     zone.manifoldPortOffsetMm === null &&
+    zone.manifoldId === null &&
     zone.leaderLengthMm === 0
   ) {
     return zone;
@@ -351,6 +364,7 @@ function clearZoneLeaderRouting(zone: Zone): Zone {
     ...zone,
     leaderWaypoints: null,
     manifoldPortOffsetMm: null,
+    manifoldId: null,
     leaderLengthMm: 0,
   };
 }
@@ -511,6 +525,7 @@ function toPersistedZone(zone: Zone): PersistedZone {
     startDirection: zone.startDirection,
     leaderWaypoints: zone.leaderWaypoints,
     manifoldPortOffsetMm: zone.manifoldPortOffsetMm,
+    manifoldId: zone.manifoldId,
   };
 }
 
@@ -530,6 +545,7 @@ function hydrateZone(zone: Partial<PersistedZone> & Pick<Zone, 'id' | 'name' | '
     areaMm2: 0,
     leaderWaypoints: Array.isArray(zone.leaderWaypoints) ? zone.leaderWaypoints : null,
     manifoldPortOffsetMm: Number.isFinite(zone.manifoldPortOffsetMm) ? (zone.manifoldPortOffsetMm as number) : null,
+    manifoldId: typeof zone.manifoldId === 'string' ? zone.manifoldId : null,
   };
 }
 
@@ -542,15 +558,29 @@ function getNextZoneCounter(zones: Zone[]): number {
   return Math.max(zones.length + 1, highestAutoZoneNumber + 1, 1);
 }
 
+function getNextManifoldCounter(manifolds: Manifold[]): number {
+  const highestAutoManifoldNumber = manifolds.reduce((highest, manifold) => {
+    const match = manifold.name.match(/^Manifold (\d+)$/);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+
+  return Math.max(manifolds.length + 1, highestAutoManifoldNumber + 1, 1);
+}
+
 function normalizeRotation(rotationDeg: number): number {
   const wrapped = rotationDeg % 360;
   return wrapped < 0 ? wrapped + 360 : wrapped;
 }
 
-function normalizeManifold(manifold: Manifold | null): Manifold | null {
-  if (!manifold) return null;
+/**
+ * Normalize a persisted manifold, filling in `id`/`name` if it predates them (index-based,
+ * since these only ever come from an array being hydrated in order).
+ */
+function hydrateManifold(manifold: Partial<Manifold> & { position: Point }, index: number): Manifold {
   return {
-    ...manifold,
+    id: typeof manifold.id === 'string' ? manifold.id : `manifold-${index + 1}`,
+    name: typeof manifold.name === 'string' ? manifold.name : `Manifold ${index + 1}`,
+    position: manifold.position,
     rotationDeg: normalizeRotation(manifold.rotationDeg ?? 0),
   };
 }
@@ -603,15 +633,18 @@ function rectPolygon(a: Point, b: Point) {
 
 /**
  * Version 1 stored every coordinate in screen pixels, with a `pixelsPerMeter` factor
- * recording what those pixels meant. Version 2 stores millimetres outright.
+ * recording what those pixels meant. Version 2 moved to millimetres outright. Version 3
+ * replaced the single `manifold` field with a `manifolds` array.
  */
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
-/** The version-1 fields, present only in files saved before the move to millimetres. */
+/** Fields present only in files saved before the current schema. */
 interface LegacyPixelState {
   pixelsPerMeter?: number;
   zones?: Array<Record<string, unknown>>;
   background?: Record<string, unknown> | null;
+  /** Pre-v3 single-manifold field, folded into `manifolds` by `migrateToMultiManifold`. */
+  manifold?: { position: Point; rotationDeg?: number } | null;
 }
 
 function scalePoint(point: Point, factor: number): Point {
@@ -621,19 +654,18 @@ function scalePoint(point: Point, factor: number): Point {
 /**
  * Bring a pre-millimetre project forward. Everything positional was in pixels, so one
  * factor — millimetres per pixel, read off the file's own calibration — converts the lot.
- * A project already at the current version passes through untouched.
+ * A project already in millimetres (any schema version — the only real discriminator is
+ * whether it carries a pixel calibration at all) passes through untouched.
  */
 function migrateToMillimetres(
   persisted: Partial<PersistedStoreState> & LegacyPixelState,
-): Partial<PersistedStoreState> {
-  const { schemaVersion, pixelsPerMeter, ...rest } = persisted as Partial<PersistedStoreState> &
-    LegacyPixelState & { schemaVersion?: number };
+): Partial<PersistedStoreState> & LegacyPixelState {
+  const { pixelsPerMeter, ...rest } = persisted;
 
-  if (schemaVersion === CURRENT_SCHEMA_VERSION) return rest as Partial<PersistedStoreState>;
   if (!Number.isFinite(pixelsPerMeter) || !pixelsPerMeter || pixelsPerMeter <= 0) {
     // No calibration to convert with: the coordinates are unrecoverable as real lengths,
     // so keep the design and let the user recalibrate rather than silently mis-scaling it.
-    return rest as Partial<PersistedStoreState>;
+    return rest;
   }
 
   const mmPerPx = 1000 / pixelsPerMeter;
@@ -641,7 +673,7 @@ function migrateToMillimetres(
   const legacyBackground = persisted.background as Record<string, unknown> | null | undefined;
 
   return {
-    ...(rest as Partial<PersistedStoreState>),
+    ...rest,
     zones: legacyZones.map((zone) => {
       const polygon = zone.polygon as { points?: Point[] } | undefined;
       const waypoints = zone.leaderWaypoints as Point[] | null | undefined;
@@ -662,6 +694,40 @@ function migrateToMillimetres(
       ? { ...persisted.manifold, position: scalePoint(persisted.manifold.position, mmPerPx) }
       : (persisted.manifold ?? null),
     background: migrateBackgroundToMillimetres(legacyBackground, mmPerPx),
+  };
+}
+
+/**
+ * Fold a pre-v3 project's single `manifold` into the `manifolds` array, and stamp
+ * `manifoldId` onto every zone that was actually routed under the old single-manifold
+ * model — exactly the zones that had a non-null `manifoldPortOffsetMm`. A project that
+ * already has a `manifolds` array passes through untouched.
+ */
+function migrateToMultiManifold(
+  persisted: Partial<PersistedStoreState> & LegacyPixelState,
+): Partial<PersistedStoreState> {
+  const { manifold: legacyManifold, ...rest } = persisted;
+  if (Array.isArray(rest.manifolds)) return rest as Partial<PersistedStoreState>;
+
+  if (!legacyManifold) {
+    return { ...(rest as Partial<PersistedStoreState>), manifolds: [] };
+  }
+
+  const manifold: Manifold = {
+    id: 'manifold-1',
+    name: 'Manifold 1',
+    position: legacyManifold.position,
+    rotationDeg: legacyManifold.rotationDeg,
+  };
+  const legacyZones = Array.isArray(rest.zones) ? (rest.zones as Array<Record<string, unknown>>) : [];
+
+  return {
+    ...(rest as Partial<PersistedStoreState>),
+    manifolds: [manifold],
+    zones: legacyZones.map((zone) => ({
+      ...zone,
+      manifoldId: zone.manifoldPortOffsetMm != null ? 'manifold-1' : null,
+    })) as PersistedStoreState['zones'],
   };
 }
 
@@ -709,7 +775,7 @@ export function partializeStoreState(state: StoreState): PersistedStoreState {
     pipeOuterDiameterMm: state.pipeOuterDiameterMm,
     background: state.background,
     zones: state.zones.map(toPersistedZone),
-    manifold: state.manifold,
+    manifolds: state.manifolds,
   };
 }
 
@@ -717,16 +783,20 @@ export function mergePersistedStoreState(
   persistedState: unknown,
   currentState: StoreState,
 ): StoreState {
-  const persisted = migrateToMillimetres(
+  const millimetres = migrateToMillimetres(
     persistedState && typeof persistedState === 'object'
       ? (persistedState as Partial<PersistedStoreState> & LegacyPixelState)
       : {},
   );
+  const persisted = migrateToMultiManifold(millimetres);
   const hydratedZones = Array.isArray(persisted.zones)
     ? persisted.zones.map((zone) =>
         hydrateZone(zone as Partial<PersistedZone> & Pick<Zone, 'id' | 'name' | 'color' | 'polygon' | 'spacingMm'>),
       )
     : currentState.zones;
+  const hydratedManifolds = Array.isArray(persisted.manifolds)
+    ? persisted.manifolds.map((manifold, index) => hydrateManifold(manifold, index))
+    : currentState.manifolds;
   const merged = {
     ...currentState,
     ...persisted,
@@ -735,12 +805,13 @@ export function mergePersistedStoreState(
       typeof persisted.pipeOuterDiameterMm === 'number' && persisted.pipeOuterDiameterMm > 0
         ? persisted.pipeOuterDiameterMm
         : DEFAULT_PIPE_OUTER_DIAMETER_MM,
-    manifold: normalizeManifold(persisted.manifold ?? currentState.manifold),
+    manifolds: hydratedManifolds,
     zones: hydratedZones,
   };
-  const zones = recomputeZones(merged.zones, merged.manifold);
+  const zones = recomputeZones(merged.zones, merged.manifolds);
 
   zoneCounter = getNextZoneCounter(zones);
+  manifoldCounter = getNextManifoldCounter(hydratedManifolds);
 
   return {
     ...merged,
@@ -749,7 +820,39 @@ export function mergePersistedStoreState(
   };
 }
 
-const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
+const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
+  /**
+   * Commit the in-progress route against whichever manifold the user clicked — resolved by
+   * `addRoutePoint` before calling this, since it's the one place that knows which manifold
+   * (of possibly several) the click landed on. Not part of the public store API: nothing
+   * outside `addRoutePoint` needs to finish a route against an arbitrary manifold directly.
+   */
+  const finishRoutingOnManifold = (manifold: Manifold, clickPos: Point) => {
+    const { routing, zones } = get();
+    if (!routing) return;
+    const zone = zones.find((candidate) => candidate.id === routing.zoneId);
+    if (!zone || !zone.spiral) return;
+
+    // The user picks the outlet by clicking it directly; it can be slid afterward.
+    const manifoldZones = zones.filter((candidate) => candidate.manifoldId === manifold.id);
+    const rawOffsetMm = projectPointOntoManifold(manifold, clickPos);
+    const manifoldPortOffsetMm = clampManifoldOffset(manifold, manifoldZones, rawOffsetMm);
+
+    // Only the drawn elbows are stored — the run from the last elbow into the manifold is
+    // derived, so it can cut diagonally or grow a bend as the geometry changes.
+    const updatedZone = withLeaderWaypoints(
+      { ...zone, manifoldPortOffsetMm, manifoldId: manifold.id },
+      manifold,
+      routing.points,
+      false,
+    );
+    if (!updatedZone) return;
+    const updatedZones = zones.map((candidate) => (candidate.id === zone.id ? updatedZone : candidate));
+
+    set({ zones: updatedZones, routing: null });
+  };
+
+  return {
   pxPerMm: DEFAULT_PX_PER_MM,
   maxCircuitLengthM: 100,
   defaultSpacingMm: 150,
@@ -759,7 +862,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   pipeOuterDiameterMm: DEFAULT_PIPE_OUTER_DIAMETER_MM,
   background: null,
   zones: [],
-  manifold: null,
+  manifolds: [],
   stageX: 0,
   stageY: 0,
   ...createTransientState(),
@@ -788,38 +891,62 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
 
   setToolMode: (mode) => set({ toolMode: mode, drawingPoints: [], drawRectStart: null, routing: null }),
 
-  setManifold: (pos) => {
-    const rotationDeg = get().manifold?.rotationDeg ?? 0;
-    const manifold = { position: pos, rotationDeg };
-    set({ manifold, toolMode: 'select', routing: null, zones: recomputeZones(get().zones, manifold) });
+  addManifold: () => {
+    const { manifolds, zones, background } = get();
+    const bounds = getDrawingBoundsMm({ zones, manifolds, background });
+    // Offset to the right of whatever's already there (manifolds included), so repeated
+    // adds naturally spread out with daylight between them instead of touching edge-to-edge
+    // (a manifold's own body is at least 800mm wide) or stacking on top of each other.
+    const position = bounds ? { x: bounds.maxX + 1500, y: (bounds.minY + bounds.maxY) / 2 } : { x: 0, y: 0 };
+    const id = `manifold-${Date.now()}`;
+    const manifold: Manifold = { id, name: `Manifold ${manifoldCounter++}`, position, rotationDeg: 0 };
+    set({ manifolds: [...manifolds, manifold], selectedManifoldId: id, selectedZoneId: null });
   },
 
-  updateManifoldPosition: (pos) => {
-    const rotationDeg = get().manifold?.rotationDeg ?? 0;
-    const manifold = { position: pos, rotationDeg };
+  deleteManifold: (id) => {
+    const { manifolds, zones, selectedManifoldId } = get();
+    const nextZones = zones.map((zone) => (zone.manifoldId === id ? clearZoneLeaderRouting(zone) : zone));
+    set({
+      manifolds: manifolds.filter((manifold) => manifold.id !== id),
+      zones: nextZones,
+      selectedManifoldId: selectedManifoldId === id ? null : selectedManifoldId,
+    });
+  },
+
+  selectManifold: (id) => set({ selectedManifoldId: id, ...(id ? { selectedZoneId: null } : {}) }),
+
+  updateManifoldName: (id, name) =>
+    set((state) => ({
+      manifolds: state.manifolds.map((manifold) => (manifold.id === id ? { ...manifold, name } : manifold)),
+    })),
+
+  updateManifoldPosition: (id, pos) => {
+    const { manifolds, zones } = get();
     /*
-     * Moving the manifold keeps every routed leader. A zone's connection is stored as an
+     * Moving a manifold keeps every routed leader. A zone's connection is stored as an
      * offset along the manifold's own length, and the spiral's shape depends on the zone's
      * connection corner rather than on where the manifold sits — so the ports travel with
      * the manifold, the drawn waypoints stay where they were put, and the run between them
      * re-aims itself. Only the recorded lengths need redoing.
      */
-    set({ manifold, routing: null, zones: recomputeZones(get().zones, manifold) });
+    const nextManifolds = manifolds.map((manifold) => (manifold.id === id ? { ...manifold, position: pos } : manifold));
+    set({ manifolds: nextManifolds, routing: null, zones: recomputeZones(zones, nextManifolds) });
   },
 
-  setManifoldRotation: (rotationDeg) => {
-    const current = get().manifold;
-    if (!current) return;
+  setManifoldRotation: (id, rotationDeg) => {
+    const { manifolds, zones } = get();
     // Rotating swings the ports around the manifold's centre; as with moving it, the
     // leaders follow rather than being thrown away.
-    const manifold = { ...current, rotationDeg: normalizeRotation(rotationDeg) };
-    set({ manifold, routing: null, zones: recomputeZones(get().zones, manifold) });
+    const nextManifolds = manifolds.map((manifold) =>
+      manifold.id === id ? { ...manifold, rotationDeg: normalizeRotation(rotationDeg) } : manifold,
+    );
+    set({ manifolds: nextManifolds, routing: null, zones: recomputeZones(zones, nextManifolds) });
   },
 
   addDrawingPoint: (pt) => set((state) => ({ drawingPoints: [...state.drawingPoints, pt] })),
 
   closeZone: () => {
-    const { drawingPoints, zones, manifold, defaultSpacingMm } = get();
+    const { drawingPoints, zones, defaultSpacingMm } = get();
     if (drawingPoints.length < 3) {
       set({ drawingPoints: [] });
       return;
@@ -842,9 +969,10 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
       areaMm2: 0,
       leaderWaypoints: null,
       manifoldPortOffsetMm: null,
+      manifoldId: null,
     };
 
-    const computed = recomputeSpiral(newZone, manifold);
+    const computed = recomputeSpiral(newZone, null);
     set({
       zones: [...zones, computed],
       drawingPoints: [],
@@ -858,7 +986,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   startDrawRect: (pt) => set({ drawRectStart: pt }),
 
   finishDrawRect: (pt) => {
-    const { drawRectStart, zones, manifold, defaultSpacingMm } = get();
+    const { drawRectStart, zones, defaultSpacingMm } = get();
     if (!drawRectStart) return;
 
     // Need at least a minimal area (avoid degenerate rects)
@@ -884,9 +1012,10 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
       areaMm2: 0,
       leaderWaypoints: null,
       manifoldPortOffsetMm: null,
+      manifoldId: null,
     };
 
-    const computed = recomputeSpiral(newZone, manifold);
+    const computed = recomputeSpiral(newZone, null);
     set({
       zones: [...zones, computed],
       drawRectStart: null,
@@ -903,22 +1032,27 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
       selectedZoneId: state.selectedZoneId === id ? null : state.selectedZoneId,
     })),
 
-  selectZone: (id) => set({ selectedZoneId: id }),
+  selectZone: (id) => set({ selectedZoneId: id, ...(id ? { selectedManifoldId: null } : {}) }),
 
   updateZoneSpacing: (id, spacingMm) => {
-    const { zones, manifold } = get();
+    const { zones, manifolds } = get();
     const updated = zones.map((zone) =>
-      zone.id === id ? recomputeSpiral({ ...zone, spacingMm }, manifold) : zone,
+      zone.id === id
+        ? recomputeSpiral({ ...zone, spacingMm }, manifolds.find((m) => m.id === zone.manifoldId) ?? null)
+        : zone,
     );
     set({ zones: updated });
   },
 
   updateZonePadding: (id, paddingMm) => {
-    const { zones, manifold } = get();
+    const { zones, manifolds } = get();
     const normalizedPaddingMm = Math.max(0, paddingMm);
     const updated = zones.map((zone) =>
       zone.id === id
-        ? recomputeSpiral({ ...zone, paddingMm: normalizedPaddingMm }, manifold)
+        ? recomputeSpiral(
+            { ...zone, paddingMm: normalizedPaddingMm },
+            manifolds.find((m) => m.id === zone.manifoldId) ?? null,
+          )
         : zone,
     );
     set({ zones: updated });
@@ -930,7 +1064,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
         if (zone.id !== id) return zone;
         return recomputeSpiral(
           { ...zone, connectionCorner: corner },
-          state.manifold,
+          state.manifolds.find((m) => m.id === zone.manifoldId) ?? null,
         );
       });
       return { zones: updated };
@@ -942,7 +1076,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
         if (zone.id !== id) return zone;
         return recomputeSpiral(
           { ...zone, startDirection: direction },
-          state.manifold,
+          state.manifolds.find((m) => m.id === zone.manifoldId) ?? null,
         );
       });
       return { zones: updated };
@@ -954,9 +1088,10 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     })),
 
   updateZoneVertex: (zoneId, vertexIdx, pt) => {
-    const { zones, manifold } = get();
+    const { zones, manifolds } = get();
     const updated = zones.map((zone) => {
       if (zone.id !== zoneId) return zone;
+      const manifold = manifolds.find((m) => m.id === zone.manifoldId) ?? null;
       const originalPoints = zone.polygon.points;
       let points: Point[];
       if (isAxisAlignedRect(originalPoints)) {
@@ -973,7 +1108,13 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
 
       if (!zone.leaderWaypoints || !previousStubs || !recomputed.spiral || !manifold) {
         // Nothing routed yet, or no spiral/manifold to compare against — nothing to preserve.
-        return { ...recomputed, leaderWaypoints: null, manifoldPortOffsetMm: null, leaderLengthMm: 0 };
+        return {
+          ...recomputed,
+          leaderWaypoints: null,
+          manifoldPortOffsetMm: null,
+          manifoldId: null,
+          leaderLengthMm: 0,
+        };
       }
 
       const newStubs = getSpiralStubs(recomputed.spiral);
@@ -983,7 +1124,13 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
 
       if (anchorShiftMm > ZONE_RESIZE_ROUTING_TOLERANCE_MM) {
         // The connection point moved enough that the old routing no longer makes sense.
-        return { ...recomputed, leaderWaypoints: null, manifoldPortOffsetMm: null, leaderLengthMm: 0 };
+        return {
+          ...recomputed,
+          leaderWaypoints: null,
+          manifoldPortOffsetMm: null,
+          manifoldId: null,
+          leaderLengthMm: 0,
+        };
       }
 
       // Barely moved — keep the routing, just repair the first segment against the new anchor.
@@ -1009,14 +1156,18 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   },
 
   addRoutePoint: (rawPt) => {
-    const { routing, zones, manifold } = get();
-    if (!routing || !manifold) return;
+    const { routing, zones, manifolds } = get();
+    if (!routing) return;
     const zone = zones.find((candidate) => candidate.id === routing.zoneId);
     if (!zone || !zone.spiral) return;
 
-    const layout = getManifoldLayout(manifold, zones);
-    if (isPointOnManifold(rawPt, manifold, layout, MANIFOLD_CLICK_MARGIN_MM)) {
-      get().finishRouting(rawPt);
+    const hitManifold = manifolds.find((manifold) => {
+      const manifoldZones = zones.filter((candidate) => candidate.manifoldId === manifold.id);
+      const layout = getManifoldLayout(manifold, manifoldZones);
+      return isPointOnManifold(rawPt, manifold, layout, MANIFOLD_CLICK_MARGIN_MM);
+    });
+    if (hitManifold) {
+      finishRoutingOnManifold(hitManifold, rawPt);
       return;
     }
 
@@ -1037,37 +1188,14 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     set({ routing: { ...routing, points: [...routing.points, snapped] } });
   },
 
-  finishRouting: (clickPos) => {
-    const { routing, zones, manifold } = get();
-    if (!routing || !manifold) return;
-    const zone = zones.find((candidate) => candidate.id === routing.zoneId);
-    if (!zone || !zone.spiral) return;
-
-    // The user picks the outlet by clicking it directly; it can be slid afterward.
-    const rawOffsetMm = projectPointOntoManifold(manifold, clickPos);
-    const manifoldPortOffsetMm = clampManifoldOffset(manifold, zones, rawOffsetMm);
-
-    // Only the drawn elbows are stored — the run from the last elbow into the manifold is
-    // derived, so it can cut diagonally or grow a bend as the geometry changes.
-    const updatedZone = withLeaderWaypoints(
-      { ...zone, manifoldPortOffsetMm },
-      manifold,
-      routing.points,
-      false,
-    );
-    if (!updatedZone) return;
-    const updatedZones = zones.map((candidate) => (candidate.id === zone.id ? updatedZone : candidate));
-
-    set({ zones: updatedZones, routing: null });
-  },
-
   cancelRouting: () => set({ routing: null }),
 
   updateLeaderWaypoint: (zoneId, waypointIndex, pt, reflow) => {
-    const { zones, manifold } = get();
-    if (!manifold) return;
+    const { zones, manifolds } = get();
     const zone = zones.find((candidate) => candidate.id === zoneId);
     if (!zone || !zone.leaderWaypoints) return;
+    const manifold = manifolds.find((candidate) => candidate.id === zone.manifoldId);
+    if (!manifold) return;
 
     const updatedWaypoints = zone.leaderWaypoints.map((point, i) => (i === waypointIndex ? pt : point));
     // Only restructure the array (insert/drop bend points) on drag-end. Doing it on every
@@ -1079,10 +1207,11 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   },
 
   updateLeaderSegment: (zoneId, waypointIndexA, waypointIndexB, axis, value, reflow) => {
-    const { zones, manifold } = get();
-    if (!manifold) return;
+    const { zones, manifolds } = get();
     const zone = zones.find((candidate) => candidate.id === zoneId);
     if (!zone || !zone.leaderWaypoints) return;
+    const manifold = manifolds.find((candidate) => candidate.id === zone.manifoldId);
+    if (!manifold) return;
 
     const updatedWaypoints = zone.leaderWaypoints.map((point, i) => {
       if (i !== waypointIndexA && i !== waypointIndexB) return point;
@@ -1096,10 +1225,11 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   },
 
   updateLeaderManifoldSegment: (zoneId, waypointIndex, axis, value, reflow) => {
-    const { zones, manifold } = get();
-    if (!manifold) return;
+    const { zones, manifolds } = get();
     const zone = zones.find((candidate) => candidate.id === zoneId);
     if (!zone || !zone.leaderWaypoints || zone.leaderWaypoints.length === 0) return;
+    const manifold = manifolds.find((candidate) => candidate.id === zone.manifoldId);
+    if (!manifold) return;
 
     const pair = getZoneManifoldPorts(manifold, zone);
     if (!pair) return;
@@ -1108,9 +1238,10 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
     // that proposed point onto the manifold's tangent — robust to any manifold rotation,
     // not just axis-aligned ones.
     const proposedTarget = axis === 'x' ? { x: value, y: currentTarget.y } : { x: currentTarget.x, y: value };
+    const manifoldZones = zones.filter((candidate) => candidate.manifoldId === manifold.id);
     const clampedOffsetMm = clampManifoldOffset(
       manifold,
-      zones,
+      manifoldZones,
       projectPointOntoManifold(manifold, proposedTarget),
     );
 
@@ -1132,14 +1263,16 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   },
 
   slideZoneManifoldPort: (zoneId, pt) => {
-    const { zones, manifold } = get();
-    if (!manifold) return;
+    const { zones, manifolds } = get();
     const zone = zones.find((candidate) => candidate.id === zoneId);
     if (!zone || !zone.leaderWaypoints) return;
+    const manifold = manifolds.find((candidate) => candidate.id === zone.manifoldId);
+    if (!manifold) return;
 
+    const manifoldZones = zones.filter((candidate) => candidate.manifoldId === manifold.id);
     const clampedOffsetMm = clampManifoldOffset(
       manifold,
-      zones,
+      manifoldZones,
       projectPointOntoManifold(manifold, pt),
     );
 
@@ -1253,13 +1386,16 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => ({
   },
 
   recomputeZoneSpiral: (zoneId) => {
-    const { zones, manifold } = get();
+    const { zones, manifolds } = get();
     const updated = zones.map((zone) =>
-      zone.id === zoneId ? recomputeSpiral(zone, manifold) : zone,
+      zone.id === zoneId
+        ? recomputeSpiral(zone, manifolds.find((m) => m.id === zone.manifoldId) ?? null)
+        : zone,
     );
     set({ zones: updated });
   },
-});
+  };
+};
 
 const persistOptions: PersistOptions<StoreState, PersistedStoreState> = {
   name: UFH_STORE_STORAGE_KEY,

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { Background, Zone } from '../types';
+import type { Background, Manifold, Zone } from '../types';
 import {
   CURRENT_SCHEMA_VERSION,
   DEFAULT_PX_PER_MM,
@@ -40,6 +40,13 @@ const persistedZone: Zone = {
   areaMm2: 0,
   leaderWaypoints: null,
   manifoldPortOffsetMm: null,
+  manifoldId: null,
+};
+
+const persistedManifold: Manifold = {
+  id: 'manifold-1',
+  name: 'Manifold 1',
+  position: { x: 400, y: 400 },
 };
 
 describe('useStore persistence', () => {
@@ -53,7 +60,7 @@ describe('useStore persistence', () => {
     store.setState({
       background: persistedImageBackground,
       zones: [persistedZone],
-      manifold: { position: { x: 400, y: 400 } },
+      manifolds: [persistedManifold],
       maxCircuitLengthM: 120,
       defaultSpacingMm: 200,
       pxPerMm: 0.5,
@@ -86,7 +93,7 @@ describe('useStore persistence', () => {
     const state = reloadedStore.getState();
 
     expect(state.background).toEqual(persistedImageBackground);
-    expect(state.manifold).toEqual({ position: { x: 400, y: 400 }, rotationDeg: 0 });
+    expect(state.manifolds).toEqual([{ ...persistedManifold, rotationDeg: 0 }]);
     expect(state.maxCircuitLengthM).toBe(120);
     expect(state.defaultSpacingMm).toBe(200);
     // The view (zoom/pan) is intentionally not persisted — it isn't part of the design.
@@ -173,7 +180,6 @@ describe('useStore persistence', () => {
     const store = createUfhStore();
 
     store.setState({
-      manifold: { position: { x: 400, y: 400 } },
       zones: [
         {
           ...persistedZone,
@@ -196,15 +202,19 @@ describe('useStore persistence', () => {
 
   it('normalizes and persists manifold rotation', async () => {
     const store = createUfhStore();
-    store.getState().setManifold({ x: 10, y: 20 });
-    store.getState().setManifoldRotation(370);
+    store.setState({ manifolds: [{ id: 'manifold-1', name: 'Manifold 1', position: { x: 10, y: 20 } }] });
+    store.getState().setManifoldRotation('manifold-1', 370);
 
-    expect(store.getState().manifold).toEqual({ position: { x: 10, y: 20 }, rotationDeg: 10 });
+    expect(store.getState().manifolds).toEqual([
+      { id: 'manifold-1', name: 'Manifold 1', position: { x: 10, y: 20 }, rotationDeg: 10 },
+    ]);
 
     const reloadedStore = createUfhStore();
     await reloadedStore.persist.rehydrate();
 
-    expect(reloadedStore.getState().manifold).toEqual({ position: { x: 10, y: 20 }, rotationDeg: 10 });
+    expect(reloadedStore.getState().manifolds).toEqual([
+      { id: 'manifold-1', name: 'Manifold 1', position: { x: 10, y: 20 }, rotationDeg: 10 },
+    ]);
   });
 
   it('moves spiral start when connection corner changes', () => {
@@ -260,6 +270,7 @@ describe('useStore persistence', () => {
       areaMm2: 0,
       leaderWaypoints: null,
       manifoldPortOffsetMm: null,
+      manifoldId: null,
     };
 
     store.setState({ zones: [squareZone] });
@@ -296,19 +307,21 @@ describe('useStore persistence', () => {
     const store = createUfhStore();
 
     store.setState({
-      manifold: { position: { x: 5000, y: 1000 }, rotationDeg: 90 },
+      manifolds: [{ id: 'manifold-1', name: 'Manifold 1', position: { x: 5000, y: 1000 }, rotationDeg: 90 }],
       zones: [persistedZone],
     });
     store.getState().recomputeZoneSpiral(persistedZone.id);
     store.getState().startRouteZone(persistedZone.id);
     store.getState().addRoutePoint({ x: 3000, y: 1900 });
-    store.getState().finishRouting({ x: 5000, y: 1000 });
+    // Clicking the manifold body finishes the route and assigns the zone to it.
+    store.getState().addRoutePoint({ x: 5000, y: 1000 });
 
     const routed = store.getState().zones[0];
     expect(routed.leaderWaypoints).not.toBeNull();
+    expect(routed.manifoldId).toBe('manifold-1');
     const spiralBefore = routed.spiral;
 
-    store.getState().updateManifoldPosition({ x: 7000, y: 2500 });
+    store.getState().updateManifoldPosition('manifold-1', { x: 7000, y: 2500 });
 
     const moved = store.getState().zones[0];
     // The drawn waypoints and the connection's place along the manifold are untouched;
@@ -320,25 +333,25 @@ describe('useStore persistence', () => {
     // The leader is longer now that the manifold is further away.
     expect(moved.leaderLengthMm).toBeGreaterThan(routed.leaderLengthMm);
 
-    store.getState().setManifoldRotation(180);
+    store.getState().setManifoldRotation('manifold-1', 180);
     expect(store.getState().zones[0].leaderWaypoints).toEqual(routed.leaderWaypoints);
     expect(store.getState().zones[0].manifoldPortOffsetMm).toBe(routed.manifoldPortOffsetMm);
   });
 
   it('calibrates the imported plan without touching the design', () => {
     const store = createUfhStore();
-    const manifold = { position: { x: 5000, y: 1000 }, rotationDeg: 90 };
+    const manifold: Manifold = { id: 'manifold-1', name: 'Manifold 1', position: { x: 5000, y: 1000 }, rotationDeg: 90 };
 
     store.setState({
       background: persistedImageBackground,
-      manifold,
+      manifolds: [manifold],
       zones: [persistedZone],
       pxPerMm: DEFAULT_PX_PER_MM,
     });
     store.getState().recomputeZoneSpiral(persistedZone.id);
     store.getState().startRouteZone(persistedZone.id);
     store.getState().addRoutePoint({ x: 3000, y: 1900 });
-    store.getState().finishRouting({ x: 5000, y: 1000 });
+    store.getState().addRoutePoint({ x: 5000, y: 1000 });
 
     const before = store.getState().zones[0];
     expect(before.leaderWaypoints).not.toBeNull();
@@ -365,10 +378,67 @@ describe('useStore persistence', () => {
     expect(state.zones[0].spiralLengthMm).toBe(before.spiralLengthMm);
     expect(state.zones[0].leaderWaypoints).toEqual(before.leaderWaypoints);
     expect(state.zones[0].manifoldPortOffsetMm).toBe(before.manifoldPortOffsetMm);
-    expect(state.manifold).toEqual(manifold);
+    expect(state.manifolds).toEqual([manifold]);
     // The view is left alone too — the plan visibly changes size, which is the point.
     expect(state.pxPerMm).toBe(DEFAULT_PX_PER_MM);
     expect(state.calibration.active).toBe(false);
+  });
+
+  it('deletes routing only for the zones connected to the deleted manifold', () => {
+    const store = createUfhStore();
+
+    const zoneA: Zone = { ...persistedZone, id: 'zone-a', name: 'Zone A' };
+    const zoneB: Zone = {
+      ...persistedZone,
+      id: 'zone-b',
+      name: 'Zone B',
+      polygon: {
+        points: [
+          { x: 10000, y: 0 },
+          { x: 12000, y: 0 },
+          { x: 12000, y: 2000 },
+          { x: 10000, y: 2000 },
+        ],
+      },
+    };
+
+    store.setState({
+      manifolds: [
+        { id: 'manifold-a', name: 'Manifold A', position: { x: 5000, y: 1000 }, rotationDeg: 90 },
+        { id: 'manifold-b', name: 'Manifold B', position: { x: 15000, y: 1000 }, rotationDeg: 90 },
+      ],
+      zones: [zoneA, zoneB],
+    });
+    store.getState().recomputeZoneSpiral('zone-a');
+    store.getState().recomputeZoneSpiral('zone-b');
+
+    store.getState().startRouteZone('zone-a');
+    store.getState().addRoutePoint({ x: 3000, y: 1900 });
+    store.getState().addRoutePoint({ x: 5000, y: 1000 }); // hits manifold-a
+
+    store.getState().startRouteZone('zone-b');
+    store.getState().addRoutePoint({ x: 13000, y: 1900 });
+    store.getState().addRoutePoint({ x: 15000, y: 1000 }); // hits manifold-b
+
+    const routedA = store.getState().zones.find((zone) => zone.id === 'zone-a')!;
+    const routedB = store.getState().zones.find((zone) => zone.id === 'zone-b')!;
+    expect(routedA.manifoldId).toBe('manifold-a');
+    expect(routedB.manifoldId).toBe('manifold-b');
+    expect(routedA.leaderWaypoints).not.toBeNull();
+    expect(routedB.leaderWaypoints).not.toBeNull();
+
+    store.getState().deleteManifold('manifold-a');
+
+    const state = store.getState();
+    expect(state.manifolds.map((manifold) => manifold.id)).toEqual(['manifold-b']);
+
+    const clearedA = state.zones.find((zone) => zone.id === 'zone-a')!;
+    const stillRoutedB = state.zones.find((zone) => zone.id === 'zone-b')!;
+    expect(clearedA.manifoldId).toBeNull();
+    expect(clearedA.leaderWaypoints).toBeNull();
+    expect(clearedA.manifoldPortOffsetMm).toBeNull();
+    expect(stillRoutedB.manifoldId).toBe('manifold-b');
+    expect(stillRoutedB.leaderWaypoints).toEqual(routedB.leaderWaypoints);
   });
 
   it('holds the first calibration point still while the plan resizes around it', () => {
@@ -442,7 +512,12 @@ describe('useStore persistence', () => {
     expect(state.zones[0].polygon.points[2]).toEqual({ x: 2000, y: 2000 });
     expect(state.zones[0].leaderWaypoints).toEqual([{ x: 2400, y: 1000 }]);
     expect(state.zones[0].manifoldPortOffsetMm).toBe(80);
-    expect(state.manifold!.position).toEqual({ x: 4000, y: 1000 });
+    // The old singular `manifold` became a one-entry `manifolds` array, and the zone —
+    // having actually been routed — got stamped with that manifold's id.
+    expect(state.manifolds).toHaveLength(1);
+    expect(state.manifolds[0].id).toBe('manifold-1');
+    expect(state.manifolds[0].position).toEqual({ x: 4000, y: 1000 });
+    expect(state.zones[0].manifoldId).toBe('manifold-1');
     expect(state.background).toMatchObject({ x: 200, y: 400, mmPerPixel: 10 });
 
     // ...and saving it again writes the current schema, with no pixel factor in sight.

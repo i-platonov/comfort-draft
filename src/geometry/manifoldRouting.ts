@@ -54,6 +54,12 @@ const MANIFOLD_SPACING = {
   pairGapMm: MANIFOLD_LINE_PITCH_MM,
 };
 
+/**
+ * `zones` here means "the zones connected to this particular manifold" — with multiple
+ * manifolds in a drawing, callers must filter to `zone.manifoldId === manifold.id` before
+ * calling this (and the other functions below that take a `zones` list), since it's only
+ * used to size/clamp this one manifold's own body, not the whole drawing's zone count.
+ */
 export function getManifoldLayout(manifold: Manifold, zones: Zone[]): ManifoldLayout {
   const { tangent, normal } = getManifoldAxes(manifold);
   const { pitchMm, pairGapMm } = MANIFOLD_SPACING;

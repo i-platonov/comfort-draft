@@ -7,6 +7,7 @@ import {
     Flame,
     Map,
     Move,
+    Plus,
     RefreshCw,
     Ruler,
     Save,
@@ -14,6 +15,7 @@ import {
     Thermometer,
     Trash2,
     Upload,
+    Wrench,
 } from 'lucide-react';
 import { parseDxfEntities, placeDxfInDrawing } from '../../geometry/dxfHelpers';
 import { mmToMeters } from '../../geometry/length';
@@ -21,6 +23,7 @@ import { UFH_STORE_STORAGE_KEY, partializeStoreState, useStore } from '../../sta
 import HeatTab from './HeatTab';
 import { COMMON_PIPE_OUTER_DIAMETERS_MM, PIPE_WALL_MM } from '../../geometry/heat';
 import ZoneCard from './ZoneCard';
+import ManifoldCard from './ManifoldCard';
 
 const PROJECT_STORAGE_VERSION = 0;
 
@@ -37,7 +40,8 @@ export default function SidePanel() {
     const {
         zones,
         selectedZoneId,
-        manifold,
+        manifolds,
+        selectedManifoldId,
         calibration,
         maxCircuitLengthM,
         defaultSpacingMm,
@@ -49,7 +53,7 @@ export default function SidePanel() {
         setBackground,
         setMaxCircuitLength,
         setDefaultSpacing,
-        setManifoldRotation,
+        addManifold,
         startCalibration,
         finishCalibration,
         cancelCalibration,
@@ -371,22 +375,26 @@ export default function SidePanel() {
                                 ))}
                             </select>
                         </div>
-                        <div className="setting-row">
-                            <label>Manifold angle:</label>
-                            <input
-                                type="number"
-                                step={1}
-                                value={manifold?.rotationDeg ?? 0}
-                                disabled={!manifold}
-                                onChange={(event) => {
-                                    const next = Number(event.target.value);
-                                    if (Number.isFinite(next)) {
-                                        setManifoldRotation(next);
-                                    }
-                                }}
-                            />
-                            <span>deg</span>
+                    </section>
+
+                    <section className="panel-section">
+                        <h2><Wrench /> Manifolds</h2>
+                        {manifolds.length === 0 && (
+                            <p className="info">No manifolds yet. Add one, then drag it into place on the canvas.</p>
+                        )}
+                        <div className="zone-list">
+                            {manifolds.map((manifold) => (
+                                <ManifoldCard
+                                    key={manifold.id}
+                                    manifold={manifold}
+                                    isSelected={manifold.id === selectedManifoldId}
+                                    zoneCount={zones.filter((zone) => zone.manifoldId === manifold.id).length}
+                                />
+                            ))}
                         </div>
+                        <button className="btn" style={{ marginTop: '4px' }} onClick={addManifold}>
+                            <Plus /> Add manifold
+                        </button>
                     </section>
                 </div>
             )}

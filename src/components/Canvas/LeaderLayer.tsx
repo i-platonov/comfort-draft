@@ -13,7 +13,7 @@ import { canvas } from '../../theme';
 
 interface Props {
   zones: Zone[];
-  manifold: Manifold | null;
+  manifolds: Manifold[];
   /** Screen pixels per millimetre — turns the screen-sized affordances below into mm. */
   pxPerMm: number;
 }
@@ -37,7 +37,7 @@ function setCursor(event: Konva.KonvaEventObject<Event>, cursor: string) {
   if (stage) stage.container().style.cursor = cursor;
 }
 
-function LeaderLayer({ zones, manifold, pxPerMm }: Props) {
+function LeaderLayer({ zones, manifolds, pxPerMm }: Props) {
   const toolMode = useStore((state) => state.toolMode);
   const updateLeaderWaypoint = useStore((state) => state.updateLeaderWaypoint);
   const updateLeaderSegment = useStore((state) => state.updateLeaderSegment);
@@ -49,9 +49,7 @@ function LeaderLayer({ zones, manifold, pxPerMm }: Props) {
   // every prior increment and compound into runaway movement.
   const segmentDragBaseRef = useRef<number | null>(null);
 
-  const paths = useMemo(() => buildManualLeaderPaths(zones, manifold), [zones, manifold]);
-
-  if (!manifold) return <Layer />;
+  const paths = useMemo(() => buildManualLeaderPaths(zones, manifolds), [zones, manifolds]);
 
   const editable = toolMode === 'routeLeader';
   const screenPxToMm = (px: number) => px / pxPerMm;
@@ -65,6 +63,8 @@ function LeaderLayer({ zones, manifold, pxPerMm }: Props) {
       {paths.map(({ zoneId, leaderPath, ports }) => {
         const zone = zones.find((candidate) => candidate.id === zoneId);
         if (!zone || !leaderPath || !zone.leaderWaypoints) return null;
+        const manifold = manifolds.find((candidate) => candidate.id === zone.manifoldId);
+        if (!manifold) return null;
 
         // Only the drawn waypoints get handles; the tail of the path is the derived
         // approach into the manifold, which the user steers via the port dot instead.
@@ -241,11 +241,12 @@ function LeaderLayer({ zones, manifold, pxPerMm }: Props) {
                 // the store projects and clamps the drag, and we snap the node onto that
                 // same edge point so it can never float off the manifold mid-drag.
                 const port = leaderPath[leaderPath.length - 1];
+                const manifoldZones = zones.filter((candidate) => candidate.manifoldId === manifold.id);
                 const snapToEdge = (event: Konva.KonvaEventObject<DragEvent>) => {
                   const dragged = { x: event.target.x(), y: event.target.y() };
                   slideZoneManifoldPort(zone.id, dragged);
                   event.target.position(
-                    clampPointToManifoldEdge(manifold, zones, dragged),
+                    clampPointToManifoldEdge(manifold, manifoldZones, dragged),
                   );
                 };
 

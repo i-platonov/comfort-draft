@@ -61,16 +61,23 @@ export interface Zone {
    * clicking the manifold while routing. `null` until routed.
    */
   manifoldPortOffsetMm: number | null;
+  /**
+   * Which manifold this zone's leader connects to. Set automatically to whichever
+   * manifold the user clicks to finish routing — there's no separate picker. `null`
+   * until routed.
+   */
+  manifoldId: string | null;
 }
 
 export interface Manifold {
+  id: string;
+  name: string;
   position: Point;
   rotationDeg?: number;
 }
 
 export type ToolMode =
   | 'select'
-  | 'placeManifold'
   | 'drawZone'
   | 'drawRect'
   | 'editBoundary'

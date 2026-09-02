@@ -4,14 +4,12 @@ import {
     MousePointer2,
     RectangleHorizontal,
     RulerDimensionLine, Waypoints,
-    Wrench,
 } from 'lucide-react';
 import { useStore } from '../../state/store';
 import { ToolMode } from '../../types';
 
-const TOOL_OPTIONS: Array<{ mode: ToolMode; label: string; Icon: typeof Wrench }> = [
+const TOOL_OPTIONS: Array<{ mode: ToolMode; label: string; Icon: typeof MousePointer2 }> = [
   { mode: 'select', label: 'Select', Icon: MousePointer2 },
-  { mode: 'placeManifold', label: 'Manifold', Icon: Wrench },
   { mode: 'drawZone', label: 'Polygon zone', Icon: Waypoints },
   { mode: 'drawRect', label: 'Rect zone', Icon: RectangleHorizontal },
   { mode: 'routeLeader', label: 'Route Leaders', Icon: Link2 },
