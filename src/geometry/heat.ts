@@ -29,7 +29,7 @@ export function zoneHeatOutputW(
  */
 export const PIPE_WALL_MM = 2;
 export const DEFAULT_PIPE_OUTER_DIAMETER_MM = 16;
-export const COMMON_PIPE_OUTER_DIAMETERS_MM = [16, 18, 20];
+export const COMMON_PIPE_OUTER_DIAMETERS_MM = [16, 17, 18, 20];
 
 /** Water held per metre of pipe, litres, for a tube of the given outside diameter. */
 export function pipeLitresPerMetre(outerDiameterMm: number): number {
