@@ -1,0 +1,211 @@
+{
+  "language": {
+    "label": "Language",
+    "en": "English",
+    "de": "German",
+    "cs": "Czech"
+  },
+  "designMode": {
+    "heating": "Heating",
+    "ventilation": "Ventilation"
+  },
+  "tabs": {
+    "setup": "Setup",
+    "zones": "Zones",
+    "heat": "Heat",
+    "vent": "Vent"
+  },
+  "toolbar": {
+    "select": "Select",
+    "polygonZone": "Polygon zone",
+    "rectZone": "Rect zone",
+    "routeLeaders": "Route Leaders",
+    "measure": "Measure",
+    "addSupplyDeflector": "Add Supply Deflector",
+    "addExtractDeflector": "Add Extract Deflector",
+    "routeDuct": "Route Duct",
+    "fitView": "Fit View",
+    "fitViewTitle": "Zoom and pan to frame the whole drawing"
+  },
+  "toolHints": {
+    "drawZone": "Click to add points. Double-click or Enter to close.",
+    "drawRect": "Click first corner, then click opposite corner to create a rectangle zone.",
+    "measure": "Click two points to measure the distance between them. Esc clears the tape.",
+    "panBackground": "Drag anywhere to move the floor plan under your zones. Zones and the manifold stay put.",
+    "editSpiral": "Drag a corner of the zone's spiral to nudge it. Click empty space to finish.",
+    "routeLeaderActive": "Drawing leader path — click to add points (horizontal/vertical only), click the manifold to connect both supply and return, or press Enter to end it here without a manifold. Esc to cancel.",
+    "routeLeaderIdle": "Click a zone to start routing its leaders, or drag a connection dot along the manifold to move it.",
+    "placeSupplyDeflector": "Click to place a supply-air deflector. Stays active, so you can place several in a row.",
+    "placeExtractDeflector": "Click to place an extract-air deflector. Stays active, so you can place several in a row.",
+    "routeDuctActive": "Drawing duct path — click to add points (horizontal/vertical only), click the distribution box to connect it, or press Enter to end it here without a box. Esc to cancel.",
+    "routeDuctIdle": "Click a deflector to start routing its duct.",
+    "editVentZoneBoundary": "Drag a corner to reshape the zone. Click empty space to finish."
+  },
+  "topToolbar": {
+    "manifoldsPlaced_one": "{{count}} manifold placed",
+    "manifoldsPlaced_other": "{{count}} manifolds placed",
+    "distributionBoxesPlaced_one": "{{count}} distribution box placed",
+    "distributionBoxesPlaced_other": "{{count}} distribution boxes placed"
+  },
+  "sidePanel": {
+    "appTitle": "Comfort Draft",
+    "project": {
+      "title": "Project",
+      "save": "Save Project",
+      "load": "Load Project",
+      "invalidFile": "Not a valid UFH Designer project file.",
+      "confirmReplace": "Loading a project replaces your current work. Continue?",
+      "loadFailed": "Failed to load project file. Make sure it is a valid exported UFH Designer file.",
+      "readFailed": "Failed to read file."
+    },
+    "floorPlan": {
+      "title": "Floor Plan",
+      "reimport": "Re-import DXF or Image",
+      "import": "Import DXF or Image",
+      "accepts": "Accepts: DXF, PNG, JPG, WEBP, GIF",
+      "dxfNoEntities": "DXF parsed but contains no supported entities (LINE, POLYLINE, CIRCLE, ARC). Try importing an image instead.",
+      "dxfParseFailed": "Failed to parse DXF. Make sure it is a valid AutoCAD DXF file, or try importing an image.",
+      "imageReadFailed": "Failed to read image file.",
+      "imageLoadFailed": "Failed to load image file.",
+      "dxfLoaded": "DXF loaded – {{count}} entities",
+      "imageLoaded": "Image loaded – {{width}}×{{height}} px",
+      "movePlan": "Move plan",
+      "doneMovingPlan": "Done moving plan",
+      "clearBackground": "Clear background"
+    },
+    "calibration": {
+      "title": "Scale Calibration",
+      "description": "The drawing is in millimetres, so zones are already true to size. Calibrating resizes the imported plan to match them — measure two points on the plan and give their real distance.",
+      "importFirst": "Import a floor plan first — there is nothing to calibrate.",
+      "calibrateScale": "Calibrate Scale",
+      "clickFirstPoint": "Click a point on the plan — it stays put as the plan resizes",
+      "clickSecondPoint": "Click a second point a known distance away",
+      "enterDistance": "Enter the real distance between the points",
+      "distancePlaceholder": "Real distance (mm)",
+      "apply": "Apply",
+      "cancel": "Cancel"
+    },
+    "defaults": {
+      "title": "Default Settings",
+      "maxCircuitLength": "Max circuit length:",
+      "defaultSpacing": "Default spacing:",
+      "defaultFlowRate": "Default flow rate:",
+      "pipeSize": "Pipe size:",
+      "ductDiameter": "Duct diameter:"
+    },
+    "manifolds": {
+      "title": "Manifolds",
+      "empty": "No manifolds yet. Add one, then drag it into place on the canvas.",
+      "add": "Add manifold"
+    },
+    "zonesTab": {
+      "empty": "No zones yet. Use \"Polygon zone\" or \"Rect zone\" to create one.",
+      "grandTotal": "Grand Total: {{value}} m"
+    }
+  },
+  "heatTab": {
+    "flowWater": "Flow Water",
+    "supplyTemp": "Supply temp",
+    "returnTemp": "Return temp",
+    "returnBelowSupplyWarning": "Return temp must be below supply temp to dissipate heat.",
+    "deltaFormula": "ΔT {{deltaT}}°C · Q = flow × ΔT × 4186 J/(kg·K), water at 1 kg/L",
+    "heatOutput": "Heat Output",
+    "noZones": "No zones yet.",
+    "flowPerZoneNote": "Flow rate is set per zone — see each zone's card in the Zones tab.",
+    "zoneSummary": "{{flow}} L/min ({{rate}}/100m) · {{wPerM2}} W/m² · {{length}}m loop",
+    "totalHeatOutput": "Total Heat Output: {{value}} W",
+    "totalFlowRequired": "Total Flow Required: {{value}} L/min",
+    "totalSystemVolume": "Total System Volume: {{value}} L",
+    "totalPipe": "Total Pipe: {{value}} m",
+    "pipeInfo": "{{od}}×{{wall}} tube ({{bore}} mm bore) · {{litresPerM}} L per metre · pipe only, excludes manifold and heat source"
+  },
+  "ventTab": {
+    "ventilationUnit": "Ventilation Unit",
+    "totalAirExchange": "Total air exchange:",
+    "unitNote": "The ventilation unit's own rated total exchange — deflector airflows below are balanced against this.",
+    "distributionBoxes": "Distribution Boxes",
+    "noDistributionBoxes": "No distribution boxes yet. Add one, then drag it into place on the canvas.",
+    "addDistributionBox": "Add distribution box",
+    "deflectors": "Deflectors",
+    "noDeflectors": "No deflectors yet. Use \"Add Supply Deflector\" or \"Add Extract Deflector\" on the toolbar, then click the canvas to place one.",
+    "totalSupply": "Total Supply: {{value}} m³/h",
+    "totalExtract": "Total Extract: {{value}} m³/h",
+    "totalDuct": "Total Duct: {{value}} m",
+    "totalDeflectors": "Total Deflectors: {{count}}",
+    "supplyMismatch": "Supply airflow ({{actual}} m³/h) doesn't match the unit's rated total ({{rated}} m³/h).",
+    "extractMismatch": "Extract airflow ({{actual}} m³/h) doesn't match the unit's rated total ({{rated}} m³/h)."
+  },
+  "zoneCard": {
+    "cornerTopLeft": "Top-left",
+    "cornerTopRight": "Top-right",
+    "cornerBottomLeft": "Bottom-left",
+    "cornerBottomRight": "Bottom-right",
+    "directionHorizontal": "Horizontal",
+    "directionVertical": "Vertical",
+    "editBoundary": "Edit boundary",
+    "dragSpiralCorners": "Drag spiral corners",
+    "resetSpiral": "Reset spiral to auto-generated fill",
+    "deleteZone": "Delete zone",
+    "spacing": "Spacing:",
+    "padding": "Padding:",
+    "flowRate": "Flow rate:",
+    "inletOutlet": "Inlet/outlet:",
+    "start": "Start:",
+    "areaSummary": "{{area}} m² · spiral {{spiral}}m · leader {{leader}}m",
+    "spiralRunningHorizontal": "Spiral leaves the manifold running horizontal",
+    "spiralRunningVertical": "Spiral leaves the manifold running vertical",
+    "connectedManifold": "Manifold: {{name}}",
+    "openEndNoManifold": "Open end (not connected to a manifold)",
+    "notConnectedManifold": "Not connected to a manifold",
+    "total": "Total:",
+    "exceedsLimit": "Exceeds {{limit}} m limit!"
+  },
+  "manifoldCard": {
+    "deleteManifold": "Delete manifold",
+    "angle": "Angle:",
+    "noZonesConnected": "No zones connected",
+    "zonesConnected_one": "{{count}} zone connected",
+    "zonesConnected_other": "{{count}} zones connected"
+  },
+  "deflectorCard": {
+    "ductTypeSupply": "Supply (fresh air in)",
+    "ductTypeExtract": "Extract (stale air out)",
+    "labelAbove": "Label above",
+    "labelBelow": "Label below",
+    "labelLeft": "Label to the left",
+    "labelRight": "Label to the right",
+    "routeDuctTitle": "Route duct to a distribution box",
+    "deleteDeflector": "Delete deflector",
+    "duct": "Duct:",
+    "airflow": "Airflow:",
+    "label": "Label:",
+    "connectedBox": "Distribution box: {{name}}",
+    "openEndNoBox": "Open end (not connected to a distribution box)",
+    "notRouted": "Not routed yet",
+    "ductLength": "Duct length:"
+  },
+  "distributionBoxCard": {
+    "deleteBox": "Delete distribution box",
+    "angle": "Angle:",
+    "noDeflectorsConnected": "No deflectors connected",
+    "deflectorsConnected_one": "{{count}} deflector connected",
+    "deflectorsConnected_other": "{{count}} deflectors connected"
+  },
+  "ventZoneCard": {
+    "editBoundary": "Edit boundary",
+    "deleteZone": "Delete zone",
+    "noDeflectorsInside": "no deflectors inside",
+    "deflectorsInside_one": "{{count}} deflector inside",
+    "deflectorsInside_other": "{{count}} deflectors inside",
+    "areaSummary": "{{area}} m² · {{deflectors}}",
+    "supply": "Supply:",
+    "extract": "Extract:"
+  },
+  "ventZonesTab": {
+    "empty": "No zones yet. Use \"Polygon zone\" or \"Rect zone\" on the toolbar to outline a room — deflectors placed inside it are counted automatically.",
+    "totalSurfaceArea": "Total Surface Area: {{value}} m²"
+  },
+  "canvas": {
+    "areaPreview": "Area: {{value}} m²"
+  }
+}

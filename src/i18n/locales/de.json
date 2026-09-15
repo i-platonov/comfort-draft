@@ -1,0 +1,211 @@
+{
+  "language": {
+    "label": "Sprache",
+    "en": "Englisch",
+    "de": "Deutsch",
+    "cs": "Tschechisch"
+  },
+  "designMode": {
+    "heating": "Heizung",
+    "ventilation": "Lüftung"
+  },
+  "tabs": {
+    "setup": "Einrichtung",
+    "zones": "Zonen",
+    "heat": "Wärme",
+    "vent": "Lüftung"
+  },
+  "toolbar": {
+    "select": "Auswählen",
+    "polygonZone": "Polygonzone",
+    "rectZone": "Rechteckzone",
+    "routeLeaders": "Anschlussleitungen verlegen",
+    "measure": "Messen",
+    "addSupplyDeflector": "Zuluftauslass hinzufügen",
+    "addExtractDeflector": "Abluftauslass hinzufügen",
+    "routeDuct": "Kanal verlegen",
+    "fitView": "Ansicht einpassen",
+    "fitViewTitle": "Zoomen und schwenken, um die gesamte Zeichnung einzupassen"
+  },
+  "toolHints": {
+    "drawZone": "Klicken, um Punkte hinzuzufügen. Doppelklick oder Enter zum Schließen.",
+    "drawRect": "Erste Ecke anklicken, dann die gegenüberliegende Ecke anklicken, um eine rechteckige Zone zu erstellen.",
+    "measure": "Zwei Punkte anklicken, um den Abstand zwischen ihnen zu messen. Esc entfernt das Maßband.",
+    "panBackground": "An einer beliebigen Stelle ziehen, um den Grundriss unter den Zonen zu verschieben. Zonen und Verteiler bleiben an ihrem Platz.",
+    "editSpiral": "Eine Ecke der Zonenspirale ziehen, um sie zu verschieben. Auf eine leere Stelle klicken, um zu beenden.",
+    "routeLeaderActive": "Anschlussleitung wird gezeichnet — klicken, um Punkte hinzuzufügen (nur horizontal/vertikal), auf den Verteiler klicken, um Vor- und Rücklauf zu verbinden, oder Enter drücken, um hier ohne Verteiler zu enden. Esc zum Abbrechen.",
+    "routeLeaderIdle": "Auf eine Zone klicken, um deren Anschlussleitungen zu verlegen, oder einen Anschlusspunkt am Verteiler ziehen, um ihn zu verschieben.",
+    "placeSupplyDeflector": "Klicken, um einen Zuluftauslass zu platzieren. Bleibt aktiv, sodass mehrere hintereinander platziert werden können.",
+    "placeExtractDeflector": "Klicken, um einen Abluftauslass zu platzieren. Bleibt aktiv, sodass mehrere hintereinander platziert werden können.",
+    "routeDuctActive": "Kanal wird gezeichnet — klicken, um Punkte hinzuzufügen (nur horizontal/vertikal), auf die Verteilerbox klicken, um sie zu verbinden, oder Enter drücken, um hier ohne Box zu enden. Esc zum Abbrechen.",
+    "routeDuctIdle": "Auf einen Luftauslass klicken, um dessen Kanal zu verlegen.",
+    "editVentZoneBoundary": "Eine Ecke ziehen, um die Zone neu zu formen. Auf eine leere Stelle klicken, um zu beenden."
+  },
+  "topToolbar": {
+    "manifoldsPlaced_one": "{{count}} Verteiler platziert",
+    "manifoldsPlaced_other": "{{count}} Verteiler platziert",
+    "distributionBoxesPlaced_one": "{{count}} Verteilerbox platziert",
+    "distributionBoxesPlaced_other": "{{count}} Verteilerboxen platziert"
+  },
+  "sidePanel": {
+    "appTitle": "Comfort Draft",
+    "project": {
+      "title": "Projekt",
+      "save": "Projekt speichern",
+      "load": "Projekt laden",
+      "invalidFile": "Keine gültige UFH Designer-Projektdatei.",
+      "confirmReplace": "Das Laden eines Projekts ersetzt die aktuelle Arbeit. Fortfahren?",
+      "loadFailed": "Projektdatei konnte nicht geladen werden. Stellen Sie sicher, dass es sich um eine gültig exportierte UFH Designer-Datei handelt.",
+      "readFailed": "Datei konnte nicht gelesen werden."
+    },
+    "floorPlan": {
+      "title": "Grundriss",
+      "reimport": "DXF oder Bild erneut importieren",
+      "import": "DXF oder Bild importieren",
+      "accepts": "Akzeptiert: DXF, PNG, JPG, WEBP, GIF",
+      "dxfNoEntities": "DXF wurde verarbeitet, enthält aber keine unterstützten Elemente (LINE, POLYLINE, CIRCLE, ARC). Versuchen Sie stattdessen, ein Bild zu importieren.",
+      "dxfParseFailed": "DXF konnte nicht verarbeitet werden. Stellen Sie sicher, dass es sich um eine gültige AutoCAD-DXF-Datei handelt, oder importieren Sie stattdessen ein Bild.",
+      "imageReadFailed": "Bilddatei konnte nicht gelesen werden.",
+      "imageLoadFailed": "Bild konnte nicht geladen werden.",
+      "dxfLoaded": "DXF geladen – {{count}} Elemente",
+      "imageLoaded": "Bild geladen – {{width}}×{{height}} px",
+      "movePlan": "Grundriss verschieben",
+      "doneMovingPlan": "Verschieben beenden",
+      "clearBackground": "Hintergrund entfernen"
+    },
+    "calibration": {
+      "title": "Maßstab kalibrieren",
+      "description": "Die Zeichnung ist in Millimetern, Zonen sind daher bereits maßstabsgetreu. Die Kalibrierung skaliert den importierten Grundriss passend dazu — messen Sie zwei Punkte auf dem Plan und geben Sie deren tatsächlichen Abstand an.",
+      "importFirst": "Zuerst einen Grundriss importieren — es gibt nichts zu kalibrieren.",
+      "calibrateScale": "Maßstab kalibrieren",
+      "clickFirstPoint": "Einen Punkt auf dem Plan anklicken — er bleibt fest, während der Plan skaliert wird",
+      "clickSecondPoint": "Einen zweiten Punkt in bekanntem Abstand anklicken",
+      "enterDistance": "Den tatsächlichen Abstand zwischen den Punkten eingeben",
+      "distancePlaceholder": "Tatsächlicher Abstand (mm)",
+      "apply": "Anwenden",
+      "cancel": "Abbrechen"
+    },
+    "defaults": {
+      "title": "Standardeinstellungen",
+      "maxCircuitLength": "Maximale Kreislänge:",
+      "defaultSpacing": "Standardabstand:",
+      "defaultFlowRate": "Standard-Durchflussrate:",
+      "pipeSize": "Rohrgröße:",
+      "ductDiameter": "Kanaldurchmesser:"
+    },
+    "manifolds": {
+      "title": "Verteiler",
+      "empty": "Noch keine Verteiler. Fügen Sie einen hinzu und ziehen Sie ihn auf die gewünschte Position.",
+      "add": "Verteiler hinzufügen"
+    },
+    "zonesTab": {
+      "empty": "Noch keine Zonen. „Polygonzone“ oder „Rechteckzone“ verwenden, um eine zu erstellen.",
+      "grandTotal": "Gesamtsumme: {{value}} m"
+    }
+  },
+  "heatTab": {
+    "flowWater": "Heizungswasser",
+    "supplyTemp": "Vorlauftemperatur",
+    "returnTemp": "Rücklauftemperatur",
+    "returnBelowSupplyWarning": "Die Rücklauftemperatur muss unter der Vorlauftemperatur liegen, damit Wärme abgegeben wird.",
+    "deltaFormula": "ΔT {{deltaT}}°C · Q = Durchfluss × ΔT × 4186 J/(kg·K), Wasser bei 1 kg/L",
+    "heatOutput": "Heizleistung",
+    "noZones": "Noch keine Zonen.",
+    "flowPerZoneNote": "Die Durchflussrate wird pro Zone festgelegt — siehe die jeweilige Zonenkarte im Reiter „Zonen“.",
+    "zoneSummary": "{{flow}} L/min ({{rate}}/100m) · {{wPerM2}} W/m² · {{length}} m Kreis",
+    "totalHeatOutput": "Gesamtheizleistung: {{value}} W",
+    "totalFlowRequired": "Gesamt-Durchfluss erforderlich: {{value}} L/min",
+    "totalSystemVolume": "Gesamtes Systemvolumen: {{value}} L",
+    "totalPipe": "Rohr gesamt: {{value}} m",
+    "pipeInfo": "{{od}}×{{wall}} Rohr ({{bore}} mm Innendurchmesser) · {{litresPerM}} L pro Meter · nur Rohr, ohne Verteiler und Wärmeerzeuger"
+  },
+  "ventTab": {
+    "ventilationUnit": "Lüftungsgerät",
+    "totalAirExchange": "Gesamtluftmenge:",
+    "unitNote": "Die vom Lüftungsgerät selbst angegebene Gesamtluftmenge — die Luftmengen der Auslässe unten werden daran abgeglichen.",
+    "distributionBoxes": "Verteilerboxen",
+    "noDistributionBoxes": "Noch keine Verteilerboxen. Fügen Sie eine hinzu und ziehen Sie sie auf die gewünschte Position.",
+    "addDistributionBox": "Verteilerbox hinzufügen",
+    "deflectors": "Luftauslässe",
+    "noDeflectors": "Noch keine Luftauslässe. „Zuluftauslass hinzufügen“ oder „Abluftauslass hinzufügen“ in der Werkzeugleiste verwenden und dann auf die Zeichenfläche klicken, um einen zu platzieren.",
+    "totalSupply": "Zuluft gesamt: {{value}} m³/h",
+    "totalExtract": "Abluft gesamt: {{value}} m³/h",
+    "totalDuct": "Kanal gesamt: {{value}} m",
+    "totalDeflectors": "Luftauslässe gesamt: {{count}}",
+    "supplyMismatch": "Die Zuluftmenge ({{actual}} m³/h) stimmt nicht mit der Gesamtluftmenge des Geräts ({{rated}} m³/h) überein.",
+    "extractMismatch": "Die Abluftmenge ({{actual}} m³/h) stimmt nicht mit der Gesamtluftmenge des Geräts ({{rated}} m³/h) überein."
+  },
+  "zoneCard": {
+    "cornerTopLeft": "Oben links",
+    "cornerTopRight": "Oben rechts",
+    "cornerBottomLeft": "Unten links",
+    "cornerBottomRight": "Unten rechts",
+    "directionHorizontal": "Horizontal",
+    "directionVertical": "Vertikal",
+    "editBoundary": "Grenze bearbeiten",
+    "dragSpiralCorners": "Spiralecken ziehen",
+    "resetSpiral": "Spirale auf automatische Füllung zurücksetzen",
+    "deleteZone": "Zone löschen",
+    "spacing": "Abstand:",
+    "padding": "Randabstand:",
+    "flowRate": "Durchflussrate:",
+    "inletOutlet": "Ein-/Auslass:",
+    "start": "Start:",
+    "areaSummary": "{{area}} m² · Spirale {{spiral}}m · Anschlussleitung {{leader}}m",
+    "spiralRunningHorizontal": "Spirale verläuft ab dem Verteiler horizontal",
+    "spiralRunningVertical": "Spirale verläuft ab dem Verteiler vertikal",
+    "connectedManifold": "Verteiler: {{name}}",
+    "openEndNoManifold": "Offenes Ende (nicht mit einem Verteiler verbunden)",
+    "notConnectedManifold": "Nicht mit einem Verteiler verbunden",
+    "total": "Gesamt:",
+    "exceedsLimit": "Überschreitet das Limit von {{limit}} m!"
+  },
+  "manifoldCard": {
+    "deleteManifold": "Verteiler löschen",
+    "angle": "Winkel:",
+    "noZonesConnected": "Keine Zonen verbunden",
+    "zonesConnected_one": "{{count}} Zone verbunden",
+    "zonesConnected_other": "{{count}} Zonen verbunden"
+  },
+  "deflectorCard": {
+    "ductTypeSupply": "Zuluft (Frischluft rein)",
+    "ductTypeExtract": "Abluft (verbrauchte Luft raus)",
+    "labelAbove": "Beschriftung oben",
+    "labelBelow": "Beschriftung unten",
+    "labelLeft": "Beschriftung links",
+    "labelRight": "Beschriftung rechts",
+    "routeDuctTitle": "Kanal zu einer Verteilerbox verlegen",
+    "deleteDeflector": "Luftauslass löschen",
+    "duct": "Kanal:",
+    "airflow": "Luftmenge:",
+    "label": "Beschriftung:",
+    "connectedBox": "Verteilerbox: {{name}}",
+    "openEndNoBox": "Offenes Ende (nicht mit einer Verteilerbox verbunden)",
+    "notRouted": "Noch nicht verlegt",
+    "ductLength": "Kanallänge:"
+  },
+  "distributionBoxCard": {
+    "deleteBox": "Verteilerbox löschen",
+    "angle": "Winkel:",
+    "noDeflectorsConnected": "Keine Luftauslässe verbunden",
+    "deflectorsConnected_one": "{{count}} Luftauslass verbunden",
+    "deflectorsConnected_other": "{{count}} Luftauslässe verbunden"
+  },
+  "ventZoneCard": {
+    "editBoundary": "Grenze bearbeiten",
+    "deleteZone": "Zone löschen",
+    "noDeflectorsInside": "keine Luftauslässe innerhalb",
+    "deflectorsInside_one": "{{count}} Luftauslass innerhalb",
+    "deflectorsInside_other": "{{count}} Luftauslässe innerhalb",
+    "areaSummary": "{{area}} m² · {{deflectors}}",
+    "supply": "Zuluft:",
+    "extract": "Abluft:"
+  },
+  "ventZonesTab": {
+    "empty": "Noch keine Zonen. „Polygonzone“ oder „Rechteckzone“ in der Werkzeugleiste verwenden, um einen Raum zu umreißen — darin platzierte Luftauslässe werden automatisch erfasst.",
+    "totalSurfaceArea": "Gesamtfläche: {{value}} m²"
+  },
+  "canvas": {
+    "areaPreview": "Fläche: {{value}} m²"
+  }
+}
