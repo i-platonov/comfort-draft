@@ -5,48 +5,78 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/banner-dark.png">
   <source media="(prefers-color-scheme: light)" srcset=".github/banner-light.png">
-  <img alt="Underfloor Heating Designer — draw your rooms, get loops you can actually lay" src=".github/banner-light.png">
+  <img alt="Comfort Draft — draw your rooms and ducts, get real pipe and duct routing" src=".github/banner-light.png">
 </picture>
 
-### [**Open the app → ufhdesigner.com**](https://ufhdesigner.com)
-
 [![Licence](https://img.shields.io/badge/licence-Apache%202.0-blue)](LICENSE)
-[![Price](https://img.shields.io/badge/price-free-brightgreen)](https://ufhdesigner.com)
-[![Runs in the browser](https://img.shields.io/badge/runs-in%20your%20browser-informational)](https://ufhdesigner.com/app)
 [![Built with](https://img.shields.io/badge/React%20·%20TypeScript%20·%20Vite-black)](#tech-stack)
 
 </div>
 
-# Underfloor Heating Circuit Designer
+# Comfort Draft
 
-Design underfloor (radiant floor) heating circuits in the browser: import a floor plan,
-draw your rooms, and get a counter-flow spiral for each one with real pipe lengths,
-circuit-length warnings and heat output per zone.
+Design underfloor (radiant floor) heating circuits **and** ventilation duct layouts in
+the browser, in one tool: import a floor plan, draw your rooms, and get real pipe or
+duct routing with length, heat-output and airflow numbers you can actually build from.
 
-**No install, no account, nothing uploaded** — [ufhdesigner.com](https://ufhdesigner.com)
-runs entirely client-side. Free and open source.
+**No install, no account, nothing uploaded** — everything runs entirely client-side.
+Free and open source, built on top of [Arend Jan Kramer's Underfloor Heating
+Designer](https://github.com/ArendJanKramer/underfloor-heating-designer) (see
+[Origin](#origin) below).
 
-## Features
+## Two workspaces
 
-- **Background Import** — Load a raster image (PNG, JPG, WEBP, GIF) **or** a DXF file as the floor-plan reference layer
-- **Scale Calibration** — Click two points on the background and enter the real-world distance to calibrate pixel→meter conversion; works with both images and DXF
-- **Manifold Placement** — Drop a draggable manifold marker as the central connection point
-- **Zone Creation (polygon)** — Draw freeform polygon zones by clicking vertices; double-click to close
-- **Zone Creation (rectangle)** — "Rect zone" mode: click first corner, then opposite corner for an axis-aligned rectangle zone
-- **Boundary Editing** — Drag zone vertices in "Select" mode with Edit Boundary active
-- **Per-zone Pipe Spacing** — Set spacing per zone (50–500 mm)
-- **Per-zone Connection Corner & Start Direction** — Pick which corner the supply/return connect near, and whether the spiral leaves the manifold running **horizontally** or **vertically**
-- **Rectilinear Serpentine Spirals** — Auto-generated inside each zone using only horizontal/vertical runs joined by rounded U-turns (see algorithm below)
-- **Manifold Leader Pipes** — Both supply and return leaders connect each zone back to the manifold
-- **Length Computation** — Spiral + leader length per zone, with over-length warnings
-- **Pan & Zoom** — Mouse-wheel zoom and drag-to-pan
+The side panel switches between two independent design modes — each with its own
+zones, tools, and totals, sharing only the floor plan and calibration underneath.
+
+### 🔥 Heating
+
+- **Multi-manifold support** — place any number of manifolds; a zone connects to
+  whichever one its leaders are routed to
+- **Zone creation** — freeform polygon (click vertices, double-click to close) or
+  axis-aligned rectangle (click two opposite corners)
+- **Boundary editing** — drag zone vertices in place after the fact
+- **Per-zone spacing, padding, connection corner and start direction** — pick which
+  corner the supply/return connect near, and whether the spiral leaves the manifold
+  running horizontally or vertically
+- **Rectilinear serpentine spirals**, auto-generated inside each zone from
+  horizontal/vertical runs joined by rounded, pipe-radius-aware U-turns; drag individual
+  spiral corners to nudge the auto-generated fill, with a one-click reset back to it
+- **Manual leader routing** — click-to-route the supply/return pipe from a zone back to
+  a manifold, snapped to horizontal/vertical runs, or let it end open with no manifold
+- **Length, flow and heat output per zone** — with over-length circuit warnings, total
+  system water volume, and a pipe-size picker (16/17/18/20 mm)
+
+### 🌬️ Ventilation
+
+- **Vent zones** — the same polygon/rectangle drawing tools, used to outline rooms so
+  deflectors placed inside are counted automatically
+- **Supply and extract deflectors** — placed as points, each with its own airflow
+  (m³/h) and a configurable label position
+- **Distribution boxes** and **manual duct routing** — click-to-route ducts from a
+  deflector back to a box, rendered as a flexible-duct zigzag symbol
+- **Balancing** — set the ventilation unit's own rated total exchange, and get warned
+  if the supply or extract side drifts too far from it
+- **Duct diameter picker** (75/90 mm)
+
+### Shared across both
+
+- **Background import** — raster image (PNG, JPG, WEBP, GIF) or DXF as the floor-plan
+  reference layer, with pan/zoom and scale calibration (click two points, enter the
+  real-world distance)
+- **Save / load project** — exports the full design to a JSON file and back
+- **Tape measure** tool for one-off distance checks
+- **Language selector** — English, German, and Czech, switchable at any time from the
+  side panel header
 
 ## Tech Stack
 
 - **Vite** + **React** + **TypeScript**
 - **react-konva** / **konva** — Interactive 2D canvas
+- **zustand** — State management, persisted to `localStorage`
+- **i18next** / **react-i18next** — Translations (English, German, Czech)
 - **dxf-parser** — DXF file parsing
-- **zustand** — State management
+- **clipper-lib** — Polygon offset/clipping
 - **Vitest** — Unit tests
 
 ## Getting Started
@@ -60,92 +90,99 @@ npm test         # Run unit tests
 
 ## Usage
 
-1. **Import background**: Click "Import DXF or Image" to load a floor plan as PNG/JPG/etc. (preferred) or as a DXF. The background is auto-fitted to the viewport.
-2. **Calibrate scale**: Click "Calibrate Scale", click two known points on the image/DXF, then enter the real-world distance between them in metres.
-3. **Place manifold**: Select the "Manifold" tool and click on the canvas.
-4. **Draw zones**:
-   - *Polygon zone*: Select "Polygon zone", click to add vertices, double-click to close.
-   - *Rectangle zone*: Select "Rectangle zone", click the first corner, then click the opposite corner.
-5. **Adjust spacing**: In each zone card, enter the desired pipe spacing.
-6. **Set the connection**: In each zone card, choose the inlet/outlet corner and the **Start** direction (Horizontal ↔ / Vertical ↕) for how the spiral leaves the manifold.
-7. **View lengths**: The side panel shows spiral length, leader length, and total per zone.
+1. **Import background**: click "Import DXF or Image" to load a floor plan (image
+   preferred; DXF also supported). The background auto-fits to the viewport.
+2. **Calibrate scale**: click "Calibrate Scale", click two known points on the plan,
+   then enter the real-world distance between them in millimetres.
+3. **Pick a workspace**: **Heating** or **Ventilation**, from the buttons under the app
+   title.
+4. **Draw zones**: *Polygon zone* (click vertices, double-click to close) or *Rect
+   zone* (click two opposite corners).
+5. **Place hardware**: add a manifold (Heating) or a distribution box (Ventilation),
+   then drag it into place.
+6. **Route pipes/ducts**: select the routing tool, click the zone or deflector to start,
+   click through waypoints, and finish on the manifold/box — or press Enter to leave the
+   run open.
+7. **Read the numbers**: the side panel's Heat or Vent tab totals length, flow, heat
+   output, or airflow, live, as you draw.
 
 ## Image Import (recommended)
 
 Raster images are the primary background workflow:
 
 - Accepted formats: **PNG, JPG/JPEG, WEBP, GIF**
-- The image is loaded via `URL.createObjectURL`, displayed on a dedicated Konva layer, and auto-fitted (centered + scaled to fill the viewport with 40 px padding).
-- The fit transform (`fitX`, `fitY`, `fitScale`) is stored in state at import time so calibration coordinates remain stable after the initial load.
+- The image is loaded via `URL.createObjectURL`, displayed on a dedicated Konva layer,
+  and auto-fitted (centered + scaled to fill the viewport).
 - Pan, zoom, and scale calibration all work on top of the image exactly as for DXF.
 
 ### DXF import
 
-DXF import is retained for compatibility. Supported entity types: `LINE`, `LWPOLYLINE`, `POLYLINE`, `CIRCLE`, `ARC`. Note that some DXF exporters produce entities not covered by these types or put all geometry at Y=0 (invisible after Y-flip). If the DXF renders nothing, use image import instead.
+DXF import is retained for compatibility. Supported entity types: `LINE`,
+`LWPOLYLINE`, `POLYLINE`, `CIRCLE`, `ARC`. Some DXF exporters produce entities not
+covered by these types, or put all geometry at Y=0 (invisible after the Y-flip). If a
+DXF renders nothing, use image import instead.
 
 ## Serpentine / Rounded-Corner Algorithm
 
-The pipe fill algorithm is a **rectilinear boustrophedon** ("even-N serpentine with U-turn arcs"):
+The heating pipe fill is a **rectilinear boustrophedon** ("even-N serpentine with
+U-turn arcs"):
 
 1. **Bounding box** of the zone polygon is computed.
-2. **Orientation** (vertical or horizontal passes) is chosen based on which edge of the bounding box is nearest the manifold:
-   - Manifold above/below the zone → **vertical passes** (parallel to Y axis)
-   - Manifold left/right of the zone → **horizontal passes** (parallel to X axis)
-3. **Even pass count** `N` is enforced (odd N is decremented by 1). An even-N boustrophedon starts and ends on the *same side* of the bounding box, ensuring both path endpoints land near the manifold-facing edge.
-4. **Rounded U-turns**: at each end of a pass a 180° semicircular arc of radius `spacing/2` is inserted (generated as 8 linear segments). This replaces mitered corners with smooth rounded turns and keeps all geometry rectilinear + arced (no diagonals).
-5. **Both endpoints** (supply entry and return exit) land near the manifold-facing edge and are individually connected back to the manifold via leader arrows.
-6. **Length accuracy**: path length is computed over the full polyline including arc segments, so arc overheads are accounted for.
+2. **Orientation** (vertical or horizontal passes) is chosen from which edge of the
+   bounding box is nearest the manifold.
+3. **Even pass count** is enforced, so the path starts and ends on the same side of the
+   bounding box, near the manifold-facing edge.
+4. **Rounded U-turns** at each pass end use a pipe-bend-radius-aware semicircular arc,
+   keeping all geometry rectilinear-plus-arcs — no diagonals.
+5. Both endpoints connect back to the manifold (or another zone's endpoint) via leader
+   routing, manual or auto-snapped.
+6. **Length accuracy**: path length is computed over the full polyline including arc
+   segments.
 
-This "even-N boustrophedon" behaves as the double-lane / counter-flow-with-return-lane arrangement: the even-indexed passes carry the outgoing flow and the odd-indexed passes carry the returning flow, interleaved at `spacing` intervals.
-
-## Rectangle Zone Mode
-
-The **"Rect zone"** toolbar button activates rectangle drawing:
-
-- Click to set the **first corner**.
-- Click again at the **opposite corner** to create an axis-aligned 4-vertex rectangle polygon.
-- A live dashed-rectangle preview is shown while moving the mouse.
-- The resulting zone flows through the same pipeline as a polygon zone (spiral generation, leader routing, length calculation).
+Ventilation ducts use a related but separate rectilinear router
+(`geometry/ductRouting.ts`), rendered with a zigzag "flex duct" symbol
+(`geometry/zigzag.ts`) rather than a solid line.
 
 ## Architecture
 
 ```text
 src/
-  types.ts                 — TypeScript types (Point, Zone, Manifold, Background, ...)
+  types.ts                    — Core types (Point, Zone, Manifold, VentZone, VentDeflector, ...)
+  i18n/                       — i18next setup + en/de/cs translation resources
   geometry/
-    offset.ts              — Polygon inward-offset helpers (used by tests)
-    spiral.ts              — Rectilinear serpentine generation (generateSerpentine)
-    length.ts              — Path length calculations
-    dxfHelpers.ts          — DXF parsing and viewport fitting
+    spiral.ts                 — Rectilinear serpentine generation (generateSerpentine)
+    spiralEditing.ts          — Dragging individual auto-generated spiral corners
+    manualRouting.ts          — Manual leader-pipe routing between zones and manifolds
+    manifoldRouting.ts        — Manifold layout and per-zone port assignment
+    ductRouting.ts            — Manual duct routing between deflectors and distribution boxes
+    zigzag.ts                 — Flex-duct zigzag rendering path
+    ventZones.ts              — Point-in-polygon test used to auto-count deflectors per zone
+    heat.ts                   — Flow, heat output and water-volume calculations
+    offset.ts, length.ts, dxfHelpers.ts, rect.ts — Supporting geometry helpers
+  pipeSpec.ts                  — Physical pipe constants (bend radius, etc.)
   state/
-    store.ts               — Zustand store (app state + all actions)
+    store.ts                  — Zustand store: all app state and actions, persisted to localStorage
   components/
-    Canvas/                — Konva stage, background layers, zone layer, manifold, leaders
-      ImageLayer.tsx       — Raster image background layer
-      DxfLayer.tsx         — DXF entity rendering
-      ZoneLayer.tsx        — Zone polygons + spirals + vertex editing
-      LeaderLayer.tsx      — Supply/return leader arrows to manifold
-      ManifoldLayer.tsx    — Manifold marker
-    SidePanel/             — Import UI, calibration, toolbar, zone list
-    Toolbar/               — Tool mode buttons
-```
-
-### Background state shape
-
-```typescript
-type Background =
-  | { kind: 'dxf';   entities: DxfEntity[]; transform: DxfTransform }
-  | { kind: 'image'; src: string; naturalWidth: number; naturalHeight: number;
-      fitX: number; fitY: number; fitScale: number }
-  | null;
+    Canvas/                   — Konva stage and layers (background, zones, manifold, leaders, vent zones, deflectors/ducts, measure)
+    SidePanel/                — Setup, zone/manifold/deflector/distribution-box cards, Heat and Vent tabs, language selector
+    Toolbar/, TopToolbar/      — Tool mode buttons and contextual hints
 ```
 
 ## Known Limitations
 
-- **Polygon clipping**: The serpentine uses the zone's axis-aligned bounding box for pass extents; it does not clip individual passes to the actual polygon boundary. This is accurate for rectangular zones; for irregular polygons some pass ends may protrude slightly beyond the zone outline.
-- **Concave polygons**: Vertex editing and spiral generation work best for convex or mildly concave zones.
-- **Leader routing**: Leaders are straight arrow lines; orthogonal routing and collision avoidance are not implemented.
-- **Large DXF files**: Very complex DXF files may be slow to render.
+- **Polygon clipping**: the serpentine uses the zone's axis-aligned bounding box for
+  pass extents rather than clipping to the actual polygon boundary. Accurate for
+  rectangular zones; irregular polygons may see pass ends protrude slightly.
+- **Concave polygons**: vertex editing and spiral generation work best for convex or
+  mildly concave zones.
+- **Large DXF files**: very complex DXF files may be slow to render.
+
+## Origin
+
+Comfort Draft started as a fork of [Underfloor Heating
+Designer](https://github.com/ArendJanKramer/underfloor-heating-designer) by Arend Jan
+Kramer, and builds on it with multi-manifold support, a full ventilation/duct-routing
+workspace, manual spiral and duct editing, and English/German/Czech translations.
 
 ## License
 
