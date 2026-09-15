@@ -24,9 +24,11 @@ import MeasureLayer from './MeasureLayer';
 import ZoneLayer from './ZoneLayer';
 import VentLayer from './VentLayer';
 import VentZoneLayer from './VentZoneLayer';
+import PlumbingLayer from './PlumbingLayer';
 import { canvas } from '../../theme';
 import { getDuctIncomingDirection, snapFirstDuctPoint } from '../../geometry/ductRouting';
 import { DUCT_CORNER_RADIUS_MM, generateZigzagPath } from '../../geometry/zigzag';
+import { findPlumbingConnectionHit } from '../../geometry/plumbingRouting';
 
 const PANEL_WIDTH = 320;
 const TOP_TOOLBAR_HEIGHT = 44;
@@ -44,6 +46,31 @@ export default function Canvas() {
   // Where the pointer was on the last background-pan tick (world coords), so each move
   // applies only its own increment; null whenever no pan drag is in progress.
   const backgroundPanFromRef = useRef<{ x: number; y: number } | null>(null);
+  // Held while drawing a plumbing pipe (which is otherwise free-angle) to lock the next
+  // point onto a horizontal/vertical line from the previous one, the same way a duct's or
+  // leader's click always snaps. Tracked globally rather than off the click event itself,
+  // so the live preview can lock too, not just the point that finally gets committed.
+  const [isShiftHeld, setIsShiftHeld] = useState(false);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Shift') setIsShiftHeld(true);
+    };
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.key === 'Shift') setIsShiftHeld(false);
+    };
+    // A window blur (e.g. Alt-Tab while Shift is held) never fires its own keyup, so the
+    // lock would otherwise stick on until the next Shift press-and-release.
+    const handleBlur = () => setIsShiftHeld(false);
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, []);
 
   const {
     background,
@@ -57,6 +84,10 @@ export default function Canvas() {
     selectedVentZoneId,
     ductDiameterMm,
     ductRouting,
+    waterSources,
+    sewerConnections,
+    fixtures,
+    plumbingRouting,
     toolMode,
     drawingPoints,
     drawRectStart,
@@ -73,8 +104,14 @@ export default function Canvas() {
     finishDrawRect,
     finishDrawVentRect,
     addRoutePoint,
+    placeManifoldAt,
     placeDeflectorAt,
     addDuctRoutePoint,
+    placeDistributionBoxAt,
+    placeFixtureAt,
+    placeWaterSourceAt,
+    placeSewerConnectionAt,
+    addPlumbingRoutePoint,
     addCalibrationPoint,
     addMeasurePoint,
     setStageTransform,
@@ -83,6 +120,9 @@ export default function Canvas() {
     selectDeflector,
     selectDistributionBox,
     selectVentZone,
+    selectWaterSource,
+    selectSewerConnection,
+    selectFixture,
     setToolMode,
     moveBackground,
   } = useStore();
@@ -146,6 +186,11 @@ export default function Canvas() {
       return;
     }
 
+    if (toolMode === 'placeManifold') {
+      placeManifoldAt(position);
+      return;
+    }
+
     if (toolMode === 'routeLeader') {
       if (routing) {
         addRoutePoint(position);
@@ -166,6 +211,38 @@ export default function Canvas() {
     if (toolMode === 'routeDuct') {
       if (ductRouting) {
         addDuctRoutePoint(position);
+      }
+      return;
+    }
+
+    if (toolMode === 'placeDistributionBox') {
+      placeDistributionBoxAt(position);
+      return;
+    }
+
+    if (toolMode === 'placeFixture') {
+      placeFixtureAt(position);
+      return;
+    }
+
+    if (toolMode === 'placeWaterSource') {
+      placeWaterSourceAt(position);
+      return;
+    }
+
+    if (toolMode === 'placeSewerConnection') {
+      placeSewerConnectionAt(position);
+      return;
+    }
+
+    if (
+      toolMode === 'routeColdPipe' ||
+      toolMode === 'routeHotPipe' ||
+      toolMode === 'routeHotReturnPipe' ||
+      toolMode === 'routeDrainPipe'
+    ) {
+      if (plumbingRouting) {
+        addPlumbingRoutePoint(position, isShiftHeld);
       }
       return;
     }
@@ -192,6 +269,9 @@ export default function Canvas() {
       selectDeflector(null);
       selectDistributionBox(null);
       selectVentZone(null);
+      selectWaterSource(null);
+      selectSewerConnection(null);
+      selectFixture(null);
       if (toolMode === 'editBoundary' || toolMode === 'editSpiral' || toolMode === 'editVentZoneBoundary') {
         setToolMode('select');
       }
@@ -201,6 +281,7 @@ export default function Canvas() {
     addDrawingPoint,
     addDuctRoutePoint,
     addMeasurePoint,
+    addPlumbingRoutePoint,
     addRoutePoint,
     calibration.active,
     drawRectStart,
@@ -208,13 +289,23 @@ export default function Canvas() {
     finishDrawRect,
     finishDrawVentRect,
     getPointerPos,
+    isShiftHeld,
+    placeManifoldAt,
     placeDeflectorAt,
+    placeDistributionBoxAt,
+    placeFixtureAt,
+    placeWaterSourceAt,
+    placeSewerConnectionAt,
+    plumbingRouting,
     routing,
     selectZone,
     selectManifold,
     selectDeflector,
     selectDistributionBox,
     selectVentZone,
+    selectWaterSource,
+    selectSewerConnection,
+    selectFixture,
     setToolMode,
     startDrawRect,
     toolMode,
@@ -266,12 +357,23 @@ export default function Canvas() {
       if (pos) setMousePos(pos);
       return;
     }
+    if (
+      (toolMode === 'routeColdPipe' ||
+        toolMode === 'routeHotPipe' ||
+        toolMode === 'routeHotReturnPipe' ||
+        toolMode === 'routeDrainPipe') &&
+      plumbingRouting
+    ) {
+      const pos = getPointerPos();
+      if (pos) setMousePos(pos);
+      return;
+    }
     // While the tape's far end is unplaced, follow the pointer so the reading is live.
     if (toolMode === 'measure' && measurement.start && !measurement.end) {
       const pos = getPointerPos();
       if (pos) setMousePos(pos);
     }
-  }, [drawRectStart, ductRouting, getPointerPos, measurement, moveBackground, routing, toolMode]);
+  }, [drawRectStart, ductRouting, getPointerPos, measurement, moveBackground, plumbingRouting, routing, toolMode]);
 
   const handleWheel = useCallback(
     (event: Konva.KonvaEventObject<WheelEvent>) => {
@@ -309,13 +411,22 @@ export default function Canvas() {
     calibration.active ||
     toolMode === 'drawZone' ||
     toolMode === 'drawRect' ||
+    toolMode === 'placeManifold' ||
     toolMode === 'routeLeader' ||
     toolMode === 'measure' ||
     toolMode === 'placeSupplyDeflector' ||
     toolMode === 'placeExtractDeflector' ||
     toolMode === 'routeDuct' ||
     toolMode === 'drawVentZone' ||
-    toolMode === 'drawVentRect'
+    toolMode === 'drawVentRect' ||
+    toolMode === 'placeDistributionBox' ||
+    toolMode === 'placeFixture' ||
+    toolMode === 'placeWaterSource' ||
+    toolMode === 'placeSewerConnection' ||
+    toolMode === 'routeColdPipe' ||
+    toolMode === 'routeHotPipe' ||
+    toolMode === 'routeHotReturnPipe' ||
+    toolMode === 'routeDrainPipe'
       ? 'crosshair'
       : toolMode === 'panBackground'
         ? 'grab'
@@ -380,6 +491,68 @@ export default function Canvas() {
       zigzag,
       color: deflector.ductType === 'supply' ? canvas.ventSupply : canvas.ventExtract,
     };
+  })();
+
+  // Live preview of a plumbing pipe's path (a plain line, at true pipe scale) while routing.
+  const plumbingRoutePreview = (() => {
+    if (!plumbingRouting || !mousePos) return null;
+    const fixture = fixtures.find((candidate) => candidate.id === plumbingRouting.fixtureId);
+    if (!fixture) return null;
+
+    const anchor = fixture.position;
+    // Free-angle routing: the preview just follows the pointer, unless Shift is held to
+    // lock the next segment onto a horizontal/vertical line from the previous point.
+    const previewPoint = isShiftHeld
+      ? plumbingRouting.points.length === 0
+        ? snapFirstDuctPoint(anchor, mousePos)
+        : snapElbowPoint(
+            plumbingRouting.points[plumbingRouting.points.length - 1],
+            mousePos,
+            getDuctIncomingDirection(anchor, plumbingRouting.points),
+          )
+      : mousePos;
+    const path = [anchor, ...plumbingRouting.points, previewPoint];
+    const lineType = plumbingRouting.lineType;
+    const color =
+      lineType === 'cold'
+        ? canvas.plumbingCold
+        : lineType === 'hot'
+          ? canvas.plumbingHot
+          : lineType === 'hotReturn'
+            ? canvas.plumbingHotReturn
+            : canvas.plumbingDrain;
+    const diameterMm =
+      lineType === 'cold'
+        ? fixture.coldDiameterMm
+        : lineType === 'hot'
+          ? fixture.hotDiameterMm
+          : lineType === 'hotReturn'
+            ? fixture.hotReturnDiameterMm
+            : fixture.drainDiameterMm;
+
+    return { path, color, diameterMm, dashed: lineType === 'hotReturn' };
+  })();
+
+  // Where the pointer would connect right now — hardware, another fixture's dot, or a tee
+  // onto another pipe — shown as a "+" so the user can see the hit before clicking, rather
+  // than guessing whether the click will register.
+  const plumbingConnectionHint = (() => {
+    if (!plumbingRouting || !mousePos) return null;
+    const fixture = fixtures.find((candidate) => candidate.id === plumbingRouting.fixtureId);
+    if (!fixture) return null;
+
+    const from = plumbingRouting.points.length > 0 ? plumbingRouting.points[plumbingRouting.points.length - 1] : fixture.position;
+    const hit = findPlumbingConnectionHit(
+      from,
+      mousePos,
+      plumbingRouting.lineType,
+      fixture.id,
+      fixtures,
+      waterSources,
+      sewerConnections,
+      pxPerMm,
+    );
+    return hit ? hit.point : null;
   })();
 
   // Rectangle preview while in drawRect (or its ventilation counterpart) mode
@@ -461,6 +634,14 @@ export default function Canvas() {
           <VentLayer distributionBoxes={distributionBoxes} deflectors={deflectors} pxPerMm={pxPerMm} />
         </>
       )}
+      {designMode === 'plumbing' && (
+        <PlumbingLayer
+          waterSources={waterSources}
+          sewerConnections={sewerConnections}
+          fixtures={fixtures}
+          pxPerMm={pxPerMm}
+        />
+      )}
       <MeasureLayer measurement={measurement} pointer={mousePos} pxPerMm={pxPerMm} />
 
       <Layer>
@@ -541,6 +722,63 @@ export default function Canvas() {
             {ductRoutePreview.path.slice(0, -1).map((point, index) => (
               <Circle key={index} x={point.x} y={point.y} radius={ductDiameterMm / 4} fill={ductRoutePreview.color} listening={false} />
             ))}
+          </>
+        )}
+
+        {/* Manual plumbing-pipe-routing preview: the single drawn path, at true pipe scale */}
+        {plumbingRoutePreview && (
+          <>
+            <Arrow
+              points={plumbingRoutePreview.path.flatMap((point) => [point.x, point.y])}
+              stroke={plumbingRoutePreview.color}
+              strokeWidth={plumbingRoutePreview.diameterMm}
+              fill={plumbingRoutePreview.color}
+              lineCap="round"
+              lineJoin="round"
+              dash={plumbingRoutePreview.dashed ? [plumbingRoutePreview.diameterMm * 4, plumbingRoutePreview.diameterMm * 2.5] : undefined}
+              pointerLength={plumbingRoutePreview.diameterMm * 1.5}
+              pointerWidth={plumbingRoutePreview.diameterMm}
+              opacity={0.6}
+              listening={false}
+            />
+            {plumbingRoutePreview.path.slice(0, -1).map((point, index) => (
+              <Circle
+                key={index}
+                x={point.x}
+                y={point.y}
+                radius={plumbingRoutePreview.diameterMm / 4}
+                fill={plumbingRoutePreview.color}
+                listening={false}
+              />
+            ))}
+          </>
+        )}
+
+        {/* "+" hint: shown at the point the pointer would connect onto right now, if it would */}
+        {plumbingConnectionHint && (
+          <>
+            <Line
+              points={[
+                plumbingConnectionHint.x - screenPxToMm(6),
+                plumbingConnectionHint.y,
+                plumbingConnectionHint.x + screenPxToMm(6),
+                plumbingConnectionHint.y,
+              ]}
+              stroke={canvas.drawPreview}
+              strokeWidth={2}
+              listening={false}
+            />
+            <Line
+              points={[
+                plumbingConnectionHint.x,
+                plumbingConnectionHint.y - screenPxToMm(6),
+                plumbingConnectionHint.x,
+                plumbingConnectionHint.y + screenPxToMm(6),
+              ]}
+              stroke={canvas.drawPreview}
+              strokeWidth={2}
+              listening={false}
+            />
           </>
         )}
 

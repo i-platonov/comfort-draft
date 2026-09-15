@@ -7,13 +7,15 @@
   },
   "designMode": {
     "heating": "Vytápění",
-    "ventilation": "Větrání"
+    "ventilation": "Větrání",
+    "plumbing": "Sanitární"
   },
   "tabs": {
     "setup": "Nastavení",
     "zones": "Zóny",
     "heat": "Teplo",
-    "vent": "Větrání"
+    "vent": "Větrání",
+    "plumbing": "Sanitární"
   },
   "toolbar": {
     "select": "Vybrat",
@@ -25,11 +27,17 @@
     "addExtractDeflector": "Přidat odvodní vyústku",
     "routeDuct": "Vést potrubí",
     "fitView": "Přizpůsobit pohled",
-    "fitViewTitle": "Přiblížit a posunout pohled na celý výkres"
+    "fitViewTitle": "Přiblížit a posunout pohled na celý výkres",
+    "addFixture": "Přidat zařizovací předmět",
+    "routeColdPipe": "Vést studenou vodu",
+    "routeHotPipe": "Vést teplou vodu",
+    "routeHotReturnPipe": "Vést cirkulaci",
+    "routeDrainPipe": "Vést odpad"
   },
   "toolHints": {
     "drawZone": "Klikáním přidávejte body. Dvojklikem nebo klávesou Enter zónu uzavřete.",
     "drawRect": "Klikněte na první rohu, poté na protilehlém rohu — vytvoří se obdélníková zóna.",
+    "placeManifold": "Klikněte na plátno pro umístění rozdělovače.",
     "measure": "Klikněte na dva body a změřte vzdálenost mezi nimi. Esc odstraní pásmo.",
     "panBackground": "Tažením kdekoli posunete půdorys pod zónami. Zóny a rozdělovač zůstanou na místě.",
     "editSpiral": "Táhněte za rohem spirály zóny a upravte jej. Kliknutím na prázdné místo úpravu dokončíte.",
@@ -39,7 +47,13 @@
     "placeExtractDeflector": "Klikněte pro umístění odvodní vyústky. Nástroj zůstává aktivní, takže lze umístit několik za sebou.",
     "routeDuctActive": "Kreslení potrubí — klikáním přidávejte body (pouze vodorovně/svisle), kliknutím na distribuční box jej připojíte, nebo stiskněte Enter a ukončete zde bez boxu. Esc pro zrušení.",
     "routeDuctIdle": "Klikněte na vyústku a začněte vést její potrubí.",
-    "editVentZoneBoundary": "Táhněte za rohem a přetvořte zónu. Kliknutím na prázdné místo úpravu dokončíte."
+    "editVentZoneBoundary": "Táhněte za rohem a přetvořte zónu. Kliknutím na prázdné místo úpravu dokončíte.",
+    "placeFixture": "Klikněte pro umístění zařizovacího předmětu (umyvadlo, sprcha, WC, ...). Nástroj zůstává aktivní, takže lze umístit několik za sebou.",
+    "routePlumbingPipeActive": "Kreslení potrubí — klikáním přidávejte body v libovolném úhlu (podržením klávesy Shift uzamknete další bod na vodorovnou/svislou linii), kliknutím na vodovodní přípojku, kanalizační přípojku, jiný zařizovací předmět nebo stávající potrubí je propojíte, nebo stiskněte Enter a ukončete zde bez propojení. Esc pro zrušení.",
+    "routePlumbingPipeIdle": "Klikněte na zařizovací předmět a začněte vést toto potrubí.",
+    "placeDistributionBox": "Klikněte na plátno pro umístění distribučního boxu.",
+    "placeWaterSource": "Klikněte na plátno pro umístění vodovodní přípojky.",
+    "placeSewerConnection": "Klikněte na plátno pro umístění kanalizační přípojky."
   },
   "topToolbar": {
     "manifoldsPlaced_one": "{{count}} rozdělovač umístěn",
@@ -47,7 +61,13 @@
     "manifoldsPlaced_other": "{{count}} rozdělovačů umístěno",
     "distributionBoxesPlaced_one": "{{count}} distribuční box umístěn",
     "distributionBoxesPlaced_few": "{{count}} distribuční boxy umístěny",
-    "distributionBoxesPlaced_other": "{{count}} distribučních boxů umístěno"
+    "distributionBoxesPlaced_other": "{{count}} distribučních boxů umístěno",
+    "waterSourcesPlaced_one": "{{count}} vodovodní přípojka umístěna",
+    "waterSourcesPlaced_few": "{{count}} vodovodní přípojky umístěny",
+    "waterSourcesPlaced_other": "{{count}} vodovodních přípojek umístěno",
+    "sewerConnectionsPlaced_one": "{{count}} kanalizační přípojka umístěna",
+    "sewerConnectionsPlaced_few": "{{count}} kanalizační přípojky umístěny",
+    "sewerConnectionsPlaced_other": "{{count}} kanalizačních přípojek umístěno"
   },
   "sidePanel": {
     "appTitle": "Comfort Draft",
@@ -93,7 +113,11 @@
       "defaultSpacing": "Výchozí rozteč:",
       "defaultFlowRate": "Výchozí průtok:",
       "pipeSize": "Průměr trubky:",
-      "ductDiameter": "Průměr potrubí:"
+      "ductDiameter": "Průměr potrubí:",
+      "coldDiameter": "Potrubí studené vody:",
+      "hotDiameter": "Potrubí teplé vody:",
+      "hotReturnDiameter": "Cirkulační potrubí:",
+      "drainDiameter": "Odpadní potrubí:"
     },
     "manifolds": {
       "title": "Rozdělovače",
@@ -212,5 +236,48 @@
   },
   "canvas": {
     "areaPreview": "Plocha: {{value}} m²"
+  },
+  "waterSourceCard": {
+    "deleteSource": "Odstranit vodovodní přípojku",
+    "angle": "Úhel:",
+    "noFixturesConnected": "Žádné připojené zařizovací předměty",
+    "fixturesConnected_one": "{{count}} připojený zařizovací předmět",
+    "fixturesConnected_few": "{{count}} připojené zařizovací předměty",
+    "fixturesConnected_other": "{{count}} připojených zařizovacích předmětů"
+  },
+  "sewerConnectionCard": {
+    "deleteConnection": "Odstranit kanalizační přípojku",
+    "angle": "Úhel:",
+    "noFixturesConnected": "Žádné připojené zařizovací předměty",
+    "fixturesConnected_one": "{{count}} připojený zařizovací předmět",
+    "fixturesConnected_few": "{{count}} připojené zařizovací předměty",
+    "fixturesConnected_other": "{{count}} připojených zařizovacích předmětů"
+  },
+  "fixtureCard": {
+    "cold": "Studená:",
+    "hot": "Teplá:",
+    "hotReturn": "Cirkulace:",
+    "drain": "Odpad:",
+    "routeCold": "Vést potrubí studené vody k vodovodní přípojce",
+    "routeHot": "Vést potrubí teplé vody k vodovodní přípojce",
+    "routeHotReturn": "Vést cirkulační potrubí k vodovodní přípojce",
+    "routeDrain": "Vést odpadní potrubí ke kanalizační přípojce",
+    "deleteFixture": "Odstranit zařizovací předmět",
+    "notRouted": "Nevedeno",
+    "openEnd": "Otevřený konec"
+  },
+  "plumbingTab": {
+    "waterSources": "Vodovodní přípojky",
+    "noWaterSources": "Zatím žádné vodovodní přípojky. Přidejte jednu a přetáhněte ji na místo na plátně.",
+    "addWaterSource": "Přidat vodovodní přípojku",
+    "sewerConnections": "Kanalizační přípojky",
+    "noSewerConnections": "Zatím žádné kanalizační přípojky. Přidejte jednu a přetáhněte ji na místo na plátně.",
+    "addSewerConnection": "Přidat kanalizační přípojku",
+    "fixtures": "Zařizovací předměty",
+    "noFixtures": "Zatím žádné zařizovací předměty. Použijte „Přidat zařizovací předmět“ na liště nástrojů a poté klikněte na plátno pro umístění.",
+    "totalCold": "Studená voda celkem: {{value}} m",
+    "totalHot": "Teplá voda celkem: {{value}} m",
+    "totalHotReturn": "Cirkulace celkem: {{value}} m",
+    "totalDrain": "Odpad celkem: {{value}} m"
   }
 }

@@ -7,13 +7,15 @@
   },
   "designMode": {
     "heating": "Heizung",
-    "ventilation": "Lüftung"
+    "ventilation": "Lüftung",
+    "plumbing": "Sanitär"
   },
   "tabs": {
     "setup": "Einrichtung",
     "zones": "Zonen",
     "heat": "Wärme",
-    "vent": "Lüftung"
+    "vent": "Lüftung",
+    "plumbing": "Sanitär"
   },
   "toolbar": {
     "select": "Auswählen",
@@ -25,11 +27,17 @@
     "addExtractDeflector": "Abluftauslass hinzufügen",
     "routeDuct": "Kanal verlegen",
     "fitView": "Ansicht einpassen",
-    "fitViewTitle": "Zoomen und schwenken, um die gesamte Zeichnung einzupassen"
+    "fitViewTitle": "Zoomen und schwenken, um die gesamte Zeichnung einzupassen",
+    "addFixture": "Sanitärobjekt hinzufügen",
+    "routeColdPipe": "Kaltwasserleitung verlegen",
+    "routeHotPipe": "Warmwasserleitung verlegen",
+    "routeHotReturnPipe": "Zirkulationsleitung verlegen",
+    "routeDrainPipe": "Abwasserleitung verlegen"
   },
   "toolHints": {
     "drawZone": "Klicken, um Punkte hinzuzufügen. Doppelklick oder Enter zum Schließen.",
     "drawRect": "Erste Ecke anklicken, dann die gegenüberliegende Ecke anklicken, um eine rechteckige Zone zu erstellen.",
+    "placeManifold": "Auf die Zeichenfläche klicken, um den Verteiler zu platzieren.",
     "measure": "Zwei Punkte anklicken, um den Abstand zwischen ihnen zu messen. Esc entfernt das Maßband.",
     "panBackground": "An einer beliebigen Stelle ziehen, um den Grundriss unter den Zonen zu verschieben. Zonen und Verteiler bleiben an ihrem Platz.",
     "editSpiral": "Eine Ecke der Zonenspirale ziehen, um sie zu verschieben. Auf eine leere Stelle klicken, um zu beenden.",
@@ -39,13 +47,23 @@
     "placeExtractDeflector": "Klicken, um einen Abluftauslass zu platzieren. Bleibt aktiv, sodass mehrere hintereinander platziert werden können.",
     "routeDuctActive": "Kanal wird gezeichnet — klicken, um Punkte hinzuzufügen (nur horizontal/vertikal), auf die Verteilerbox klicken, um sie zu verbinden, oder Enter drücken, um hier ohne Box zu enden. Esc zum Abbrechen.",
     "routeDuctIdle": "Auf einen Luftauslass klicken, um dessen Kanal zu verlegen.",
-    "editVentZoneBoundary": "Eine Ecke ziehen, um die Zone neu zu formen. Auf eine leere Stelle klicken, um zu beenden."
+    "editVentZoneBoundary": "Eine Ecke ziehen, um die Zone neu zu formen. Auf eine leere Stelle klicken, um zu beenden.",
+    "placeFixture": "Klicken, um ein Sanitärobjekt (Waschbecken, Dusche, WC, ...) zu platzieren. Bleibt aktiv, sodass mehrere hintereinander platziert werden können.",
+    "routePlumbingPipeActive": "Leitung wird gezeichnet — klicken, um Punkte in beliebigem Winkel hinzuzufügen (Umschalt gedrückt halten, um den nächsten Punkt auf eine horizontale/vertikale Linie einzurasten), auf den Wasseranschluss, Abwasseranschluss, ein anderes Sanitärobjekt oder eine vorhandene Leitung klicken, um daran anzuschließen, oder Enter drücken, um hier ohne Verbindung zu enden. Esc zum Abbrechen.",
+    "routePlumbingPipeIdle": "Auf ein Sanitärobjekt klicken, um diese Leitung zu verlegen.",
+    "placeDistributionBox": "Auf die Zeichenfläche klicken, um die Verteilerbox zu platzieren.",
+    "placeWaterSource": "Auf die Zeichenfläche klicken, um den Wasseranschluss zu platzieren.",
+    "placeSewerConnection": "Auf die Zeichenfläche klicken, um den Abwasseranschluss zu platzieren."
   },
   "topToolbar": {
     "manifoldsPlaced_one": "{{count}} Verteiler platziert",
     "manifoldsPlaced_other": "{{count}} Verteiler platziert",
     "distributionBoxesPlaced_one": "{{count}} Verteilerbox platziert",
-    "distributionBoxesPlaced_other": "{{count}} Verteilerboxen platziert"
+    "distributionBoxesPlaced_other": "{{count}} Verteilerboxen platziert",
+    "waterSourcesPlaced_one": "{{count}} Wasseranschluss platziert",
+    "waterSourcesPlaced_other": "{{count}} Wasseranschlüsse platziert",
+    "sewerConnectionsPlaced_one": "{{count}} Abwasseranschluss platziert",
+    "sewerConnectionsPlaced_other": "{{count}} Abwasseranschlüsse platziert"
   },
   "sidePanel": {
     "appTitle": "Comfort Draft",
@@ -91,7 +109,11 @@
       "defaultSpacing": "Standardabstand:",
       "defaultFlowRate": "Standard-Durchflussrate:",
       "pipeSize": "Rohrgröße:",
-      "ductDiameter": "Kanaldurchmesser:"
+      "ductDiameter": "Kanaldurchmesser:",
+      "coldDiameter": "Kaltwasserleitung:",
+      "hotDiameter": "Warmwasserleitung:",
+      "hotReturnDiameter": "Zirkulationsleitung:",
+      "drainDiameter": "Abwasserleitung:"
     },
     "manifolds": {
       "title": "Verteiler",
@@ -207,5 +229,46 @@
   },
   "canvas": {
     "areaPreview": "Fläche: {{value}} m²"
+  },
+  "waterSourceCard": {
+    "deleteSource": "Wasseranschluss löschen",
+    "angle": "Winkel:",
+    "noFixturesConnected": "Keine Sanitärobjekte verbunden",
+    "fixturesConnected_one": "{{count}} Sanitärobjekt verbunden",
+    "fixturesConnected_other": "{{count}} Sanitärobjekte verbunden"
+  },
+  "sewerConnectionCard": {
+    "deleteConnection": "Abwasseranschluss löschen",
+    "angle": "Winkel:",
+    "noFixturesConnected": "Keine Sanitärobjekte verbunden",
+    "fixturesConnected_one": "{{count}} Sanitärobjekt verbunden",
+    "fixturesConnected_other": "{{count}} Sanitärobjekte verbunden"
+  },
+  "fixtureCard": {
+    "cold": "Kalt:",
+    "hot": "Warm:",
+    "hotReturn": "Zirkulation:",
+    "drain": "Abwasser:",
+    "routeCold": "Kaltwasserleitung zu einem Wasseranschluss verlegen",
+    "routeHot": "Warmwasserleitung zu einem Wasseranschluss verlegen",
+    "routeHotReturn": "Zirkulationsleitung zu einem Wasseranschluss verlegen",
+    "routeDrain": "Abwasserleitung zum Abwasseranschluss verlegen",
+    "deleteFixture": "Sanitärobjekt löschen",
+    "notRouted": "Nicht verlegt",
+    "openEnd": "Offenes Ende"
+  },
+  "plumbingTab": {
+    "waterSources": "Wasseranschlüsse",
+    "noWaterSources": "Noch keine Wasseranschlüsse. Fügen Sie einen hinzu und ziehen Sie ihn auf die gewünschte Position.",
+    "addWaterSource": "Wasseranschluss hinzufügen",
+    "sewerConnections": "Abwasseranschlüsse",
+    "noSewerConnections": "Noch keine Abwasseranschlüsse. Fügen Sie einen hinzu und ziehen Sie ihn auf die gewünschte Position.",
+    "addSewerConnection": "Abwasseranschluss hinzufügen",
+    "fixtures": "Sanitärobjekte",
+    "noFixtures": "Noch keine Sanitärobjekte. „Sanitärobjekt hinzufügen“ in der Werkzeugleiste verwenden und dann auf die Zeichenfläche klicken, um eines zu platzieren.",
+    "totalCold": "Kaltwasser gesamt: {{value}} m",
+    "totalHot": "Warmwasser gesamt: {{value}} m",
+    "totalHotReturn": "Zirkulation gesamt: {{value}} m",
+    "totalDrain": "Abwasser gesamt: {{value}} m"
   }
 }

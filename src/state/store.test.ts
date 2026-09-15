@@ -579,6 +579,26 @@ describe('useStore persistence', () => {
   });
 });
 
+describe('manifold placement', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('places a manifold at the clicked point and returns the tool to select', () => {
+    const store = createUfhStore();
+    store.getState().setToolMode('placeManifold');
+
+    store.getState().placeManifoldAt({ x: 1000, y: 2000 });
+
+    const state = store.getState();
+    expect(state.manifolds).toHaveLength(1);
+    expect(state.manifolds[0]).toMatchObject({ name: 'Manifold 1', position: { x: 1000, y: 2000 }, rotationDeg: 0 });
+    expect(state.selectedManifoldId).toBe(state.manifolds[0].id);
+    // Unlike a deflector/fixture, a manifold is a one-off placement — the tool doesn't stay armed.
+    expect(state.toolMode).toBe('select');
+  });
+});
+
 describe('ventilation duct routing', () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -619,7 +639,7 @@ describe('ventilation duct routing', () => {
 
   it('routes a duct from a deflector to the distribution box clicked to finish it', () => {
     const store = createUfhStore();
-    store.getState().addDistributionBox();
+    store.getState().placeDistributionBoxAt({ x: 0, y: 0 });
     const box = store.getState().distributionBoxes[0];
     store.getState().updateDistributionBoxPosition(box.id, { x: 5000, y: 1000 });
 
@@ -657,7 +677,7 @@ describe('ventilation duct routing', () => {
 
   it('recomputes duct length, without dropping the route, when the box moves', () => {
     const store = createUfhStore();
-    store.getState().addDistributionBox();
+    store.getState().placeDistributionBoxAt({ x: 0, y: 0 });
     const box = store.getState().distributionBoxes[0];
     store.getState().updateDistributionBoxPosition(box.id, { x: 5000, y: 1000 });
 
@@ -679,7 +699,7 @@ describe('ventilation duct routing', () => {
 
   it('deletes ducts only for the deflectors connected to the deleted distribution box', () => {
     const store = createUfhStore();
-    // Set up directly with distinct ids — two rapid `addDistributionBox()` calls in the
+    // Set up directly with distinct ids — two rapid `placeDistributionBoxAt()` calls in the
     // same tick would otherwise both mint their id from `Date.now()`.
     store.setState({
       distributionBoxes: [
@@ -761,7 +781,7 @@ describe('ventilation duct routing', () => {
   it('persists the ventilation system and clears transient routing/selection on reload', async () => {
     const store = createUfhStore();
     store.getState().setTotalVentAirflowM3h(200);
-    store.getState().addDistributionBox();
+    store.getState().placeDistributionBoxAt({ x: 0, y: 0 });
     const box = store.getState().distributionBoxes[0];
     store.getState().placeDeflectorAt({ x: 1000, y: 1000 }, 'supply');
     const deflector = store.getState().deflectors[0];
@@ -849,6 +869,430 @@ describe('ventilation duct routing', () => {
     await store.persist.rehydrate();
 
     expect(store.getState().deflectors[0].airflowLabelPosition).toBe('right');
+  });
+});
+
+describe('plumbing pipe routing', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('places a fixture with every line unrouted and stays in the placing tool', () => {
+    const store = createUfhStore();
+    store.getState().setToolMode('placeFixture');
+
+    store.getState().placeFixtureAt({ x: 1000, y: 1000 });
+
+    const state = store.getState();
+    expect(state.fixtures).toHaveLength(1);
+    expect(state.fixtures[0]).toMatchObject({
+      name: 'Fixture 1',
+      position: { x: 1000, y: 1000 },
+      coldWaypoints: null,
+      hotWaypoints: null,
+      hotReturnWaypoints: null,
+      drainWaypoints: null,
+      coldTarget: null,
+      hotTarget: null,
+      hotReturnTarget: null,
+      drainTarget: null,
+    });
+    expect(state.selectedFixtureId).toBe(state.fixtures[0].id);
+    // Unlike closing a zone or finishing a rect, placing a fixture doesn't reset the tool.
+    expect(state.toolMode).toBe('placeFixture');
+  });
+
+  it('routes a cold-water line from a fixture to the water source clicked to finish it', () => {
+    const store = createUfhStore();
+    store.getState().placeWaterSourceAt({ x: 0, y: 0 });
+    const source = store.getState().waterSources[0];
+    store.getState().updateWaterSourcePosition(source.id, { x: 5000, y: 1000 });
+
+    store.getState().placeFixtureAt({ x: 1000, y: 1000 });
+    const fixture = store.getState().fixtures[0];
+
+    store.getState().startRoutePlumbingPipe(fixture.id, 'cold');
+    store.getState().addPlumbingRoutePoint({ x: 3000, y: 1000 });
+    // Clicking the source body finishes the route and assigns the fixture's cold line to it.
+    store.getState().addPlumbingRoutePoint({ x: 5000, y: 1000 });
+
+    const routed = store.getState().fixtures[0];
+    expect(store.getState().plumbingRouting).toBeNull();
+    expect(routed.coldTarget).toEqual({ kind: 'waterSource', id: source.id });
+    expect(routed.coldWaypoints).not.toBeNull();
+    expect(routed.coldLengthMm).toBeGreaterThan(0);
+    // Only the cold line was touched.
+    expect(routed.hotWaypoints).toBeNull();
+    expect(routed.drainWaypoints).toBeNull();
+  });
+
+  it('routes a drain line to the sewer connection independently of the water source', () => {
+    const store = createUfhStore();
+    store.getState().placeSewerConnectionAt({ x: 0, y: 0 });
+    const connection = store.getState().sewerConnections[0];
+    store.getState().updateSewerConnectionPosition(connection.id, { x: 0, y: 5000 });
+
+    store.getState().placeFixtureAt({ x: 0, y: 1000 });
+    const fixture = store.getState().fixtures[0];
+
+    store.getState().startRoutePlumbingPipe(fixture.id, 'drain');
+    store.getState().addPlumbingRoutePoint({ x: 0, y: 3000 });
+    store.getState().addPlumbingRoutePoint({ x: 0, y: 5000 });
+
+    const routed = store.getState().fixtures[0];
+    expect(routed.drainTarget).toEqual({ kind: 'sewerConnection', id: connection.id });
+    expect(routed.drainLengthMm).toBeGreaterThan(0);
+    expect(routed.coldTarget).toBeNull();
+  });
+
+  it('chamfers a drain corner into two 45° bends, but leaves other lines square', () => {
+    const store = createUfhStore();
+    store.getState().placeFixtureAt({ x: 0, y: 0 });
+    const fixture = store.getState().fixtures[0];
+
+    // Route the drain with a right-angle turn: +x, then +y.
+    store.getState().startRoutePlumbingPipe(fixture.id, 'drain');
+    store.getState().addPlumbingRoutePoint({ x: 1000, y: 0 });
+    store.getState().addPlumbingRoutePoint({ x: 1000, y: 1000 });
+    store.getState().finishPlumbingRoutingAtPoint();
+    const drainWaypoints = store.getState().fixtures[0].drainWaypoints!;
+
+    // The 90° corner is replaced by two points bracketing a 45° diagonal cut.
+    expect(drainWaypoints).toHaveLength(3);
+    const [before, after, end] = drainWaypoints;
+    expect(before.y).toBe(0);
+    expect(after.x).toBe(1000);
+    expect(Math.abs(after.x - before.x)).toBeCloseTo(Math.abs(after.y - before.y), 5);
+    expect(end).toEqual({ x: 1000, y: 1000 });
+
+    // The exact same shape on the hot line keeps its plain 90° corner.
+    store.getState().startRoutePlumbingPipe(fixture.id, 'hot');
+    store.getState().addPlumbingRoutePoint({ x: 1000, y: 0 });
+    store.getState().addPlumbingRoutePoint({ x: 1000, y: 1000 });
+    store.getState().finishPlumbingRoutingAtPoint();
+    expect(store.getState().fixtures[0].hotWaypoints).toEqual([
+      { x: 1000, y: 0 },
+      { x: 1000, y: 1000 },
+    ]);
+  });
+
+  it('chamfers a drain corner that finishes by connecting straight onto the sewer connection', () => {
+    const store = createUfhStore();
+    store.getState().placeSewerConnectionAt({ x: 0, y: 0 });
+    const connection = store.getState().sewerConnections[0];
+    store.getState().updateSewerConnectionPosition(connection.id, { x: 3000, y: 1000 });
+
+    store.getState().placeFixtureAt({ x: 0, y: 1000 });
+    const fixture = store.getState().fixtures[0];
+
+    store.getState().startRoutePlumbingPipe(fixture.id, 'drain');
+    // Turn once, then finish by clicking straight onto the connection body.
+    store.getState().addPlumbingRoutePoint({ x: 1500, y: 1000 });
+    store.getState().addPlumbingRoutePoint({ x: 3000, y: 1000 });
+
+    const routed = store.getState().fixtures[0];
+    expect(routed.drainTarget).toEqual({ kind: 'sewerConnection', id: connection.id });
+    // A straight run has no corner to chamfer, so the single elbow survives untouched.
+    expect(routed.drainWaypoints).toEqual([{ x: 1500, y: 1000 }]);
+  });
+
+  it('finishes a pipe at the last drawn point, with no hardware, when finished without a hit', () => {
+    const store = createUfhStore();
+    store.getState().placeFixtureAt({ x: 0, y: 0 });
+    const fixture = store.getState().fixtures[0];
+
+    store.getState().startRoutePlumbingPipe(fixture.id, 'hot');
+    store.getState().addPlumbingRoutePoint({ x: 1000, y: 0 });
+    const drawnPoints = store.getState().plumbingRouting!.points;
+    store.getState().finishPlumbingRoutingAtPoint();
+
+    const routed = store.getState().fixtures[0];
+    expect(store.getState().plumbingRouting).toBeNull();
+    expect(routed.hotWaypoints).toEqual(drawnPoints);
+    expect(routed.hotTarget).toBeNull();
+    expect(routed.hotLengthMm).toBeGreaterThan(0);
+  });
+
+  it('routing one line leaves a sibling line already connected to the same source untouched', () => {
+    const store = createUfhStore();
+    store.getState().placeWaterSourceAt({ x: 0, y: 0 });
+    const source = store.getState().waterSources[0];
+    store.getState().updateWaterSourcePosition(source.id, { x: 5000, y: 0 });
+    store.getState().placeFixtureAt({ x: 0, y: 0 });
+    const fixture = store.getState().fixtures[0];
+
+    store.getState().startRoutePlumbingPipe(fixture.id, 'hot');
+    store.getState().addPlumbingRoutePoint({ x: 5000, y: 0 });
+    const afterHot = store.getState().fixtures[0];
+    expect(afterHot.hotTarget).toEqual({ kind: 'waterSource', id: source.id });
+
+    // Restarting the cold line must not disturb the hot line's own connection.
+    store.getState().startRoutePlumbingPipe(fixture.id, 'cold');
+    const midRoute = store.getState().fixtures[0];
+    expect(midRoute.hotTarget).toEqual({ kind: 'waterSource', id: source.id });
+    expect(midRoute.hotWaypoints).not.toBeNull();
+    expect(midRoute.coldWaypoints).toBeNull();
+  });
+
+  it('deletes only the lines connected to the deleted water source, leaving the drain alone', () => {
+    const store = createUfhStore();
+    store.getState().placeWaterSourceAt({ x: 0, y: 0 });
+    const source = store.getState().waterSources[0];
+    store.getState().updateWaterSourcePosition(source.id, { x: 5000, y: 0 });
+    store.getState().placeSewerConnectionAt({ x: 0, y: 0 });
+    const connection = store.getState().sewerConnections[0];
+    store.getState().updateSewerConnectionPosition(connection.id, { x: 0, y: 5000 });
+
+    store.getState().placeFixtureAt({ x: 0, y: 0 });
+    const fixture = store.getState().fixtures[0];
+    store.getState().startRoutePlumbingPipe(fixture.id, 'cold');
+    store.getState().addPlumbingRoutePoint({ x: 5000, y: 0 });
+    store.getState().startRoutePlumbingPipe(fixture.id, 'drain');
+    store.getState().addPlumbingRoutePoint({ x: 0, y: 5000 });
+
+    store.getState().deleteWaterSource(source.id);
+
+    const state = store.getState();
+    expect(state.waterSources).toEqual([]);
+    const cleared = state.fixtures[0];
+    expect(cleared.coldTarget).toBeNull();
+    expect(cleared.coldWaypoints).toBeNull();
+    expect(cleared.coldLengthMm).toBe(0);
+    // The drain, connected to unrelated hardware, survives.
+    expect(cleared.drainTarget).toEqual({ kind: 'sewerConnection', id: connection.id });
+    expect(cleared.drainLengthMm).toBeGreaterThan(0);
+  });
+
+  it('routes freely at any angle — no horizontal/vertical snapping', () => {
+    const store = createUfhStore();
+    store.getState().placeFixtureAt({ x: 0, y: 0 });
+    const fixture = store.getState().fixtures[0];
+
+    store.getState().startRoutePlumbingPipe(fixture.id, 'hot');
+    // A deliberately off-axis point — nothing here is a multiple of a right angle.
+    store.getState().addPlumbingRoutePoint({ x: 437, y: 918 });
+    store.getState().finishPlumbingRoutingAtPoint();
+
+    expect(store.getState().fixtures[0].hotWaypoints).toEqual([{ x: 437, y: 918 }]);
+  });
+
+  it('locks a point onto a horizontal/vertical line from the previous one when told to', () => {
+    const store = createUfhStore();
+    store.getState().placeFixtureAt({ x: 0, y: 0 });
+    const fixture = store.getState().fixtures[0];
+
+    store.getState().startRoutePlumbingPipe(fixture.id, 'hot');
+    // An off-axis click, but with the lock on — snaps to the dominant axis instead of
+    // landing exactly where clicked.
+    store.getState().addPlumbingRoutePoint({ x: 900, y: 100 }, true);
+    store.getState().finishPlumbingRoutingAtPoint();
+
+    const [locked] = store.getState().fixtures[0].hotWaypoints!;
+    expect(locked).toEqual({ x: 900, y: 0 });
+  });
+
+  it('locks each further point relative to the previous leg, not just the first', () => {
+    const store = createUfhStore();
+    store.getState().placeFixtureAt({ x: 0, y: 0 });
+    const fixture = store.getState().fixtures[0];
+
+    store.getState().startRoutePlumbingPipe(fixture.id, 'cold');
+    store.getState().addPlumbingRoutePoint({ x: 1000, y: 0 }, true);
+    // Off-axis relative to the incoming (+x) leg — locks to the vertical instead.
+    store.getState().addPlumbingRoutePoint({ x: 1100, y: 800 }, true);
+    store.getState().finishPlumbingRoutingAtPoint();
+
+    const waypoints = store.getState().fixtures[0].coldWaypoints!;
+    expect(waypoints).toEqual([{ x: 1000, y: 0 }, { x: 1000, y: 800 }]);
+  });
+
+  it('rejects a click that lands on top of the last point, but keeps the route open', () => {
+    const store = createUfhStore();
+    store.getState().placeFixtureAt({ x: 0, y: 0 });
+    const fixture = store.getState().fixtures[0];
+
+    store.getState().startRoutePlumbingPipe(fixture.id, 'hot');
+    store.getState().addPlumbingRoutePoint({ x: 500, y: 500 });
+    store.getState().addPlumbingRoutePoint({ x: 501, y: 500 }); // 1mm away — well under the click guard
+
+    expect(store.getState().plumbingRouting?.points).toEqual([{ x: 500, y: 500 }]);
+  });
+
+  it('connects one fixture\'s line onto another fixture\'s own dot, without hardware', () => {
+    const store = createUfhStore();
+    store.getState().placeFixtureAt({ x: 0, y: 0 });
+    const upstream = store.getState().fixtures[0];
+    store.getState().placeFixtureAt({ x: 3000, y: 0 });
+    const downstream = store.getState().fixtures[1];
+
+    store.getState().startRoutePlumbingPipe(downstream.id, 'drain');
+    store.getState().addPlumbingRoutePoint({ x: 1500, y: 0 });
+    // Clicking the upstream fixture's own dot finishes the route onto it — no hardware involved.
+    store.getState().addPlumbingRoutePoint(upstream.position);
+
+    const routedDownstream = store.getState().fixtures.find((f) => f.id === downstream.id)!;
+    expect(routedDownstream.drainTarget).toEqual({ kind: 'fixture', id: upstream.id });
+    expect(routedDownstream.drainLengthMm).toBeGreaterThan(0);
+  });
+
+  it('clears a line entirely — waypoints included — when its target fixture is deleted', () => {
+    const store = createUfhStore();
+    store.getState().placeFixtureAt({ x: 0, y: 0 });
+    const upstream = store.getState().fixtures[0];
+    store.getState().placeFixtureAt({ x: 3000, y: 0 });
+    const downstream = store.getState().fixtures[1];
+
+    store.getState().startRoutePlumbingPipe(downstream.id, 'drain');
+    store.getState().addPlumbingRoutePoint({ x: 1500, y: 0 });
+    store.getState().addPlumbingRoutePoint(upstream.position);
+
+    store.getState().deleteFixture(upstream.id);
+
+    const state = store.getState();
+    expect(state.fixtures).toHaveLength(1);
+    const remaining = state.fixtures[0];
+    expect(remaining.id).toBe(downstream.id);
+    // Same as a deflector losing its distribution box: dropped entirely, not just opened up.
+    expect(remaining.drainTarget).toBeNull();
+    expect(remaining.drainWaypoints).toBeNull();
+    expect(remaining.drainLengthMm).toBe(0);
+  });
+
+  it('tees a fixture\'s line onto the middle of another fixture\'s already-drawn line', () => {
+    const store = createUfhStore();
+    store.getState().placeSewerConnectionAt({ x: 0, y: 0 });
+    const connection = store.getState().sewerConnections[0];
+    store.getState().updateSewerConnectionPosition(connection.id, { x: 4000, y: 0 });
+
+    store.getState().placeFixtureAt({ x: 0, y: 0 });
+    const trunk = store.getState().fixtures[0];
+    store.getState().startRoutePlumbingPipe(trunk.id, 'drain');
+    store.getState().addPlumbingRoutePoint({ x: 4000, y: 0 });
+
+    store.getState().placeFixtureAt({ x: 2000, y: 500 });
+    const branch = store.getState().fixtures[1];
+    store.getState().startRoutePlumbingPipe(branch.id, 'drain');
+    // Click a point that's not on the trunk fixture's own dot, but sits right on its
+    // already-drawn drain line — this should tee in rather than requiring a hardware
+    // or fixture-to-fixture connection.
+    store.getState().addPlumbingRoutePoint({ x: 2000, y: 0 });
+
+    const routedBranch = store.getState().fixtures.find((f) => f.id === branch.id)!;
+    expect(routedBranch.drainTarget?.kind).toBe('pipe');
+    const target = routedBranch.drainTarget as { kind: 'pipe'; fixtureId: string; lineType: string; point: { x: number; y: number } };
+    expect(target.fixtureId).toBe(trunk.id);
+    expect(target.lineType).toBe('drain');
+    // Floating-point projection onto the trunk segment, not necessarily bit-exact.
+    expect(target.point.x).toBeCloseTo(2000, 5);
+    expect(target.point.y).toBeCloseTo(0, 5);
+    expect(routedBranch.drainLengthMm).toBeGreaterThan(0);
+    // The branch's own path actually ends on the trunk line, not floating in space.
+    expect(store.getState().plumbingRouting).toBeNull();
+  });
+
+  it('recomputes a branch\'s length when the upstream line it tees onto is re-routed into a different shape', () => {
+    const store = createUfhStore();
+    store.getState().placeFixtureAt({ x: 0, y: 0 });
+    const trunk = store.getState().fixtures[0];
+    store.getState().startRoutePlumbingPipe(trunk.id, 'drain');
+    store.getState().addPlumbingRoutePoint({ x: 4000, y: 0 });
+    store.getState().finishPlumbingRoutingAtPoint();
+
+    store.getState().placeFixtureAt({ x: 2000, y: 500 });
+    const branch = store.getState().fixtures[1];
+    store.getState().startRoutePlumbingPipe(branch.id, 'drain');
+    // Tees onto the trunk's straight run at (2000, 0).
+    store.getState().addPlumbingRoutePoint({ x: 2000, y: 0 });
+    const before = store.getState().fixtures.find((f) => f.id === branch.id)!.drainLengthMm;
+
+    // Redraw the trunk's own drain into a deliberately asymmetric shape (a bend well off to
+    // one side, not a mirror-symmetric peak) — the branch's tee point re-projects onto
+    // whichever point of the new run is now nearest to where it was originally teed in.
+    store.getState().startRoutePlumbingPipe(trunk.id, 'drain');
+    store.getState().addPlumbingRoutePoint({ x: 3000, y: 1000 });
+    store.getState().addPlumbingRoutePoint({ x: 4000, y: 0 });
+    store.getState().finishPlumbingRoutingAtPoint();
+
+    const after = store.getState().fixtures.find((f) => f.id === branch.id)!.drainLengthMm;
+    expect(after).not.toBeCloseTo(before, 0);
+    expect(after).toBeGreaterThan(0);
+  });
+
+  it('leaves a cyclic pair of tees open (never extending to the unreachable target) rather than looping or throwing', () => {
+    const store = createUfhStore();
+    store.getState().placeFixtureAt({ x: 0, y: 0 });
+    const a = store.getState().fixtures[0];
+    store.getState().placeFixtureAt({ x: 1000, y: 1000 });
+    const b = store.getState().fixtures[1];
+
+    store.setState({
+      fixtures: [
+        { ...a, drainWaypoints: [{ x: 1000, y: 0 }], drainTarget: { kind: 'pipe', fixtureId: b.id, lineType: 'drain', point: { x: 1000, y: 1000 } } },
+        { ...b, drainWaypoints: [{ x: 0, y: 1000 }], drainTarget: { kind: 'pipe', fixtureId: a.id, lineType: 'drain', point: { x: 0, y: 0 } } },
+      ],
+    });
+
+    // Nothing here should throw or hang, and neither line can ever settle as connected.
+    expect(() => store.getState().updateFixturePosition(a.id, { x: 0, y: 0 })).not.toThrow();
+    const state = store.getState();
+    const foundA = state.fixtures.find((fixture) => fixture.id === a.id)!;
+    const foundB = state.fixtures.find((fixture) => fixture.id === b.id)!;
+    expect(foundA.drainTarget).not.toBeNull();
+    expect(foundB.drainTarget).not.toBeNull();
+    // Each line stays at its own drawn (1000mm) length rather than extending another
+    // 1000mm into the target it can never actually resolve.
+    expect(foundA.drainLengthMm).toBeCloseTo(1000, 0);
+    expect(foundB.drainLengthMm).toBeCloseTo(1000, 0);
+  });
+
+  it('switching design mode resets tool state without touching the plumbing design', () => {
+    const store = createUfhStore();
+    store.getState().placeFixtureAt({ x: 0, y: 0 });
+    const fixture = store.getState().fixtures[0];
+    store.getState().startRoutePlumbingPipe(fixture.id, 'cold');
+    store.getState().addPlumbingRoutePoint({ x: 1000, y: 0 });
+    store.getState().selectFixture(fixture.id);
+
+    store.getState().setDesignMode('heating');
+
+    const state = store.getState();
+    expect(state.designMode).toBe('heating');
+    expect(state.toolMode).toBe('select');
+    expect(state.plumbingRouting).toBeNull();
+    expect(state.selectedFixtureId).toBeNull();
+    // The in-progress route was abandoned, not silently saved.
+    expect(state.fixtures[0].coldWaypoints).toBeNull();
+  });
+
+  it('persists the plumbing system and clears transient routing/selection on reload', async () => {
+    const store = createUfhStore();
+    store.getState().placeWaterSourceAt({ x: 0, y: 0 });
+    const source = store.getState().waterSources[0];
+    store.getState().placeFixtureAt({ x: 1000, y: 1000 });
+    const fixture = store.getState().fixtures[0];
+    store.getState().updateFixtureDiameter(fixture.id, 'cold', 18);
+    store.getState().startRoutePlumbingPipe(fixture.id, 'cold');
+    store.getState().addPlumbingRoutePoint({ x: 1000, y: 2000 });
+    store.getState().finishPlumbingRoutingAtPoint();
+    store.getState().setDesignMode('plumbing');
+
+    const serialized = window.localStorage.getItem(UFH_STORE_STORAGE_KEY);
+    expect(serialized).toContain('Water Source 1');
+    expect(serialized).not.toContain('"plumbingRouting"');
+    expect(serialized).not.toContain('"designMode"');
+
+    const reloadedStore = createUfhStore();
+    await reloadedStore.persist.rehydrate();
+    const state = reloadedStore.getState();
+
+    expect(state.waterSources).toEqual([source]);
+    expect(state.fixtures).toHaveLength(1);
+    expect(state.fixtures[0].coldDiameterMm).toBe(18);
+    expect(state.fixtures[0].coldWaypoints).not.toBeNull();
+    // The view/session state is never persisted, plumbing included.
+    expect(state.designMode).toBe('heating');
+    expect(state.plumbingRouting).toBeNull();
+    expect(state.selectedFixtureId).toBeNull();
   });
 });
 

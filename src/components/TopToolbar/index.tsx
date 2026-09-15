@@ -8,12 +8,15 @@ function useToolHint(): string | null {
   const toolMode = useStore((state) => state.toolMode);
   const routing = useStore((state) => state.routing);
   const ductRouting = useStore((state) => state.ductRouting);
+  const plumbingRouting = useStore((state) => state.plumbingRouting);
 
   switch (toolMode) {
     case 'drawZone':
       return t('toolHints.drawZone');
     case 'drawRect':
       return t('toolHints.drawRect');
+    case 'placeManifold':
+      return t('toolHints.placeManifold');
     case 'measure':
       return t('toolHints.measure');
     case 'panBackground':
@@ -34,6 +37,19 @@ function useToolHint(): string | null {
       return t('toolHints.drawRect');
     case 'editVentZoneBoundary':
       return t('toolHints.editVentZoneBoundary');
+    case 'placeDistributionBox':
+      return t('toolHints.placeDistributionBox');
+    case 'placeFixture':
+      return t('toolHints.placeFixture');
+    case 'placeWaterSource':
+      return t('toolHints.placeWaterSource');
+    case 'placeSewerConnection':
+      return t('toolHints.placeSewerConnection');
+    case 'routeColdPipe':
+    case 'routeHotPipe':
+    case 'routeHotReturnPipe':
+    case 'routeDrainPipe':
+      return plumbingRouting ? t('toolHints.routePlumbingPipeActive') : t('toolHints.routePlumbingPipeIdle');
     default:
       return null;
   }
@@ -43,6 +59,8 @@ export default function TopToolbar() {
   const { t } = useTranslation();
   const manifoldCount = useStore((state) => state.manifolds.length);
   const distributionBoxCount = useStore((state) => state.distributionBoxes.length);
+  const waterSourceCount = useStore((state) => state.waterSources.length);
+  const sewerConnectionCount = useStore((state) => state.sewerConnections.length);
   const designMode = useStore((state) => state.designMode);
   const hint = useToolHint();
 
@@ -59,6 +77,16 @@ export default function TopToolbar() {
         {designMode === 'ventilation' && distributionBoxCount > 0 && (
           <span className="toolbar-hint success">
             <Check /> {t('topToolbar.distributionBoxesPlaced', { count: distributionBoxCount })}
+          </span>
+        )}
+        {designMode === 'plumbing' && waterSourceCount > 0 && (
+          <span className="toolbar-hint success">
+            <Check /> {t('topToolbar.waterSourcesPlaced', { count: waterSourceCount })}
+          </span>
+        )}
+        {designMode === 'plumbing' && sewerConnectionCount > 0 && (
+          <span className="toolbar-hint success">
+            <Check /> {t('topToolbar.sewerConnectionsPlaced', { count: sewerConnectionCount })}
           </span>
         )}
       </div>

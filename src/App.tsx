@@ -9,6 +9,7 @@ export default function App() {
   const toolMode = useStore((state) => state.toolMode);
   const routing = useStore((state) => state.routing);
   const ductRouting = useStore((state) => state.ductRouting);
+  const plumbingRouting = useStore((state) => state.plumbingRouting);
   const closeZone = useStore((state) => state.closeZone);
   const closeVentZone = useStore((state) => state.closeVentZone);
   const cancelDrawing = useStore((state) => state.cancelDrawing);
@@ -16,7 +17,15 @@ export default function App() {
   const finishRoutingAtPoint = useStore((state) => state.finishRoutingAtPoint);
   const cancelDuctRouting = useStore((state) => state.cancelDuctRouting);
   const finishDuctRoutingAtPoint = useStore((state) => state.finishDuctRoutingAtPoint);
+  const cancelPlumbingRouting = useStore((state) => state.cancelPlumbingRouting);
+  const finishPlumbingRoutingAtPoint = useStore((state) => state.finishPlumbingRoutingAtPoint);
   const clearMeasurement = useStore((state) => state.clearMeasurement);
+
+  const isRoutePlumbingPipeMode =
+    toolMode === 'routeColdPipe' ||
+    toolMode === 'routeHotPipe' ||
+    toolMode === 'routeHotReturnPipe' ||
+    toolMode === 'routeDrainPipe';
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
@@ -40,6 +49,12 @@ export default function App() {
         finishDuctRoutingAtPoint();
       }
 
+      if (event.key === 'Enter' && isRoutePlumbingPipeMode && plumbingRouting) {
+        // End the pipe right here, with no water source/sewer connection involved — the
+        // plumbing counterpart of finishing a leader or duct route without hardware.
+        finishPlumbingRoutingAtPoint();
+      }
+
       if (event.key === 'Escape') {
         // A tape can be left on screen as a reference while working in another tool, so
         // Escape drops it whatever mode you're in, not only while measuring.
@@ -48,6 +63,8 @@ export default function App() {
           cancelRouting();
         } else if (toolMode === 'routeDuct') {
           cancelDuctRouting();
+        } else if (isRoutePlumbingPipeMode) {
+          cancelPlumbingRouting();
         } else {
           cancelDrawing();
         }
@@ -56,13 +73,17 @@ export default function App() {
     [
       cancelDrawing,
       cancelDuctRouting,
+      cancelPlumbingRouting,
       cancelRouting,
       clearMeasurement,
       closeZone,
       closeVentZone,
       ductRouting,
       finishDuctRoutingAtPoint,
+      finishPlumbingRoutingAtPoint,
       finishRoutingAtPoint,
+      isRoutePlumbingPipeMode,
+      plumbingRouting,
       routing,
       toolMode,
     ],

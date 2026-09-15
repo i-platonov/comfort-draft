@@ -9,14 +9,20 @@ import {
   LeaderRoutingState,
   Manifold,
   MeasurementState,
+  PlumbingConnectionTarget,
+  PlumbingFixture,
+  PlumbingLineType,
+  PlumbingRoutingState,
   Point,
   Polygon,
+  SewerConnection,
   SpiralStartDirection,
   ToolMode,
   VentDeflector,
   VentDistributionBox,
   VentDuctType,
   VentZone,
+  WaterSource,
   Zone,
   ZoneConnectionCorner,
 } from '../types';
@@ -52,11 +58,21 @@ import {
   isPointOnDistributionBox,
   snapFirstDuctPoint,
 } from '../geometry/ductRouting';
+import {
+  buildFixturePipePaths,
+  chamferLastDrainElbow,
+  DEFAULT_DRAIN_DIAMETER_MM,
+  DEFAULT_SUPPLY_DIAMETER_MM,
+  findPlumbingConnectionHit,
+  MIN_PLUMBING_CLICK_DISTANCE_MM,
+} from '../geometry/plumbingRouting';
 
 const MANIFOLD_CLICK_MARGIN_MM = 100;
 const MIN_LEADER_SEGMENT_MM = 150;
 /** Below this, a zone resize is treated as not having moved the connection point — existing leader routing is kept. */
 const ZONE_RESIZE_ROUTING_TOLERANCE_MM = 200;
+
+const DEFAULT_HOT_RETURN_DIAMETER_MM = 12;
 
 const DEFAULT_ZONE_PADDING_MM = 100;
 const DEFAULT_ZONE_FLOW_LPM_PER_100M = 2;
@@ -138,6 +154,26 @@ interface StoreState {
   drawRectStart: Point | null;
   /** In-progress manual leader-routing session, if any */
   routing: LeaderRoutingState | null;
+
+  /** The main house water connection(s) — see `WaterSource`. */
+  waterSources: WaterSource[];
+  selectedWaterSourceId: string | null;
+  /** Where drain/soil pipes ultimately connect — see `SewerConnection`. */
+  sewerConnections: SewerConnection[];
+  selectedSewerConnectionId: string | null;
+  /** Water outlets for the plumbing workspace — see `PlumbingFixture`. */
+  fixtures: PlumbingFixture[];
+  selectedFixtureId: string | null;
+  /** Same purpose as `deflectorFocusNonce`, for fixture selection. */
+  fixtureFocusNonce: number;
+  /** In-progress manual routing session for one of a fixture's four lines, if any. */
+  plumbingRouting: PlumbingRoutingState | null;
+  /** Nominal diameters for newly-drawn plumbing lines, mm — project-wide, like the heating pipe size. */
+  defaultColdDiameterMm: number;
+  defaultHotDiameterMm: number;
+  defaultHotReturnDiameterMm: number;
+  defaultDrainDiameterMm: number;
+
   calibration: CalibrationState;
   /** The tape measure's two ends, in mm; both null when nothing is being measured. */
   measurement: MeasurementState;
@@ -158,8 +194,8 @@ interface StoreState {
    * one workspace (an in-progress route, a selected zone) bleeds into the other.
    */
   setDesignMode: (mode: DesignMode) => void;
-  /** Add a new manifold near existing content (or the origin, if the drawing is empty). */
-  addManifold: () => void;
+  /** Place a new manifold at a clicked point — activated by the "Add manifold" button. */
+  placeManifoldAt: (pt: Point) => void;
   /** Remove a manifold and clear routing for every zone that was connected to it. */
   deleteManifold: (id: string) => void;
   selectManifold: (id: string | null) => void;
@@ -273,8 +309,8 @@ interface StoreState {
   setTotalVentAirflowM3h: (m3h: number) => void;
   setDuctDiameterMm: (mm: number) => void;
 
-  /** Add a new distribution box near existing content (or the origin, if the drawing is empty). */
-  addDistributionBox: () => void;
+  /** Place a new distribution box at a clicked point — activated by the "Add distribution box" button. */
+  placeDistributionBoxAt: (pt: Point) => void;
   /** Remove a distribution box and clear routing for every deflector that was connected to it. */
   deleteDistributionBox: (id: string) => void;
   selectDistributionBox: (id: string | null) => void;
@@ -327,6 +363,75 @@ interface StoreState {
   updateVentZoneVertex: (zoneId: string, vertexIdx: number, pt: Point) => void;
   /** Insert a new vertex right after `afterIndex` — double-clicking an edge while editing a boundary. */
   insertVentZoneVertex: (zoneId: string, afterIndex: number, pt: Point) => void;
+
+  setDefaultColdDiameterMm: (mm: number) => void;
+  setDefaultHotDiameterMm: (mm: number) => void;
+  setDefaultHotReturnDiameterMm: (mm: number) => void;
+  setDefaultDrainDiameterMm: (mm: number) => void;
+
+  /** Place a new water source at a clicked point — activated by the "Add water source" button. */
+  placeWaterSourceAt: (pt: Point) => void;
+  /** Remove a water source and open up every fixture line that was connected to it. */
+  deleteWaterSource: (id: string) => void;
+  selectWaterSource: (id: string | null) => void;
+  updateWaterSourceName: (id: string, name: string) => void;
+  updateWaterSourcePosition: (id: string, pos: Point) => void;
+  setWaterSourceRotation: (id: string, rotationDeg: number) => void;
+
+  /** Place a new sewer connection at a clicked point — activated by the "Add sewer connection" button. */
+  placeSewerConnectionAt: (pt: Point) => void;
+  /** Remove a sewer connection and open up every fixture's drain that was connected to it. */
+  deleteSewerConnection: (id: string) => void;
+  selectSewerConnection: (id: string | null) => void;
+  updateSewerConnectionName: (id: string, name: string) => void;
+  updateSewerConnectionPosition: (id: string, pos: Point) => void;
+  setSewerConnectionRotation: (id: string, rotationDeg: number) => void;
+
+  /** Place a new fixture at a clicked point. Stays in the placing tool afterward, so several can be dropped in a row. */
+  placeFixtureAt: (pt: Point) => void;
+  deleteFixture: (id: string) => void;
+  selectFixture: (id: string | null) => void;
+  updateFixtureName: (id: string, name: string) => void;
+  updateFixtureDiameter: (id: string, lineType: PlumbingLineType, mm: number) => void;
+  /** Drag a fixture to a new position — it's its own anchor for all four lines, so this just moves the anchor and recomputes lengths. */
+  updateFixturePosition: (id: string, pt: Point) => void;
+
+  /** Begin (or restart) manual routing for one of a fixture's four lines. */
+  startRoutePlumbingPipe: (fixtureId: string, lineType: PlumbingLineType) => void;
+  /**
+   * Add a click to the in-progress pipe path; finishes routing automatically — and
+   * connects that line to it — if the click lands on the right kind of target (hardware,
+   * another fixture, or an existing pipe to tee onto). `lockToAngle` — held Shift — snaps
+   * the new point onto a horizontal/vertical line from the previous one instead of placing
+   * it exactly where clicked, for drawing a straight run without needing a steady hand.
+   */
+  addPlumbingRoutePoint: (pt: Point, lockToAngle?: boolean) => void;
+  /** Finish the in-progress line at the last drawn point, without connecting to any hardware. */
+  finishPlumbingRoutingAtPoint: () => void;
+  /** Abandon the in-progress route without saving it. */
+  cancelPlumbingRouting: () => void;
+  /**
+   * Drag a single waypoint of an already-drawn line. Routing is free-angle, so — unlike the
+   * leader's/duct's equivalent — nothing else needs repairing; `reflow` is kept only so the
+   * layer's drag-move/drag-end calls share the same shape as every other routing type.
+   */
+  updateFixtureWaypoint: (
+    fixtureId: string,
+    lineType: PlumbingLineType,
+    waypointIndex: number,
+    pt: Point,
+    reflow: boolean,
+  ) => void;
+  /** Slide a segment that happens to be purely horizontal/vertical by moving its two endpoint waypoints together along the perpendicular axis. */
+  updateFixtureSegment: (
+    fixtureId: string,
+    lineType: PlumbingLineType,
+    waypointIndexA: number,
+    waypointIndexB: number,
+    axis: 'x' | 'y',
+    value: number,
+    reflow: boolean,
+  ) => void;
 }
 
 export type PersistedZone = Pick<
@@ -358,6 +463,25 @@ export type PersistedDeflector = Pick<
   | 'ductWaypoints'
 >;
 
+export type PersistedFixture = Pick<
+  PlumbingFixture,
+  | 'id'
+  | 'name'
+  | 'position'
+  | 'coldDiameterMm'
+  | 'hotDiameterMm'
+  | 'hotReturnDiameterMm'
+  | 'drainDiameterMm'
+  | 'coldWaypoints'
+  | 'coldTarget'
+  | 'hotWaypoints'
+  | 'hotTarget'
+  | 'hotReturnWaypoints'
+  | 'hotReturnTarget'
+  | 'drainWaypoints'
+  | 'drainTarget'
+>;
+
 export interface PersistedStoreState {
   /** Bumped when the on-disk shape changes; drives migration on load. */
   schemaVersion: number;
@@ -375,6 +499,13 @@ export interface PersistedStoreState {
   distributionBoxes: VentDistributionBox[];
   deflectors: PersistedDeflector[];
   ventZones: VentZone[];
+  waterSources: WaterSource[];
+  sewerConnections: SewerConnection[];
+  fixtures: PersistedFixture[];
+  defaultColdDiameterMm: number;
+  defaultHotDiameterMm: number;
+  defaultHotReturnDiameterMm: number;
+  defaultDrainDiameterMm: number;
 }
 
 export const UFH_STORE_STORAGE_KEY = 'ufh-designer-store';
@@ -384,6 +515,9 @@ let manifoldCounter = 1;
 let distributionBoxCounter = 1;
 let deflectorCounter = 1;
 let ventZoneCounter = 1;
+let waterSourceCounter = 1;
+let sewerConnectionCounter = 1;
+let fixtureCounter = 1;
 
 function createTransientState(): Pick<
   StoreState,
@@ -396,6 +530,11 @@ function createTransientState(): Pick<
   | 'selectedVentZoneId'
   | 'ventZoneFocusNonce'
   | 'ductRouting'
+  | 'selectedWaterSourceId'
+  | 'selectedSewerConnectionId'
+  | 'selectedFixtureId'
+  | 'fixtureFocusNonce'
+  | 'plumbingRouting'
   | 'toolMode'
   | 'drawingPoints'
   | 'drawRectStart'
@@ -413,6 +552,11 @@ function createTransientState(): Pick<
     selectedVentZoneId: null,
     ventZoneFocusNonce: 0,
     ductRouting: null,
+    selectedWaterSourceId: null,
+    selectedSewerConnectionId: null,
+    selectedFixtureId: null,
+    fixtureFocusNonce: 0,
+    plumbingRouting: null,
     toolMode: 'select',
     drawingPoints: [],
     drawRectStart: null,
@@ -497,6 +641,76 @@ function clearDeflectorDuctRouting(deflector: VentDeflector): VentDeflector {
 }
 
 /**
+ * Recompute every fixture's derived line lengths against the current hardware layout — the
+ * only correct way to do it now that a target can be another fixture: resolving that kind
+ * of target needs the *whole* fixtures array, not just the one being recomputed, so this is
+ * called on the full array even when only a single fixture actually changed.
+ */
+function recomputeFixtures(
+  fixtures: PlumbingFixture[],
+  waterSources: WaterSource[],
+  sewerConnections: SewerConnection[],
+): PlumbingFixture[] {
+  const lengthByKey = new Map(
+    buildFixturePipePaths(fixtures, waterSources, sewerConnections).map((result) => [
+      `${result.fixtureId}:${result.lineType}`,
+      pathLengthMm(result.path),
+    ]),
+  );
+  return fixtures.map((fixture) => ({
+    ...fixture,
+    coldLengthMm: lengthByKey.get(`${fixture.id}:cold`) ?? 0,
+    hotLengthMm: lengthByKey.get(`${fixture.id}:hot`) ?? 0,
+    hotReturnLengthMm: lengthByKey.get(`${fixture.id}:hotReturn`) ?? 0,
+    drainLengthMm: lengthByKey.get(`${fixture.id}:drain`) ?? 0,
+  }));
+}
+
+/**
+ * Clear a single line's manual routing (and its own target) — used when the user restarts
+ * routing that one line. Siblings on the same fixture (e.g. `hot` while `cold` is being
+ * redrawn) are untouched, since each line owns its own target.
+ */
+function clearFixtureLine(fixture: PlumbingFixture, lineType: PlumbingLineType): PlumbingFixture {
+  switch (lineType) {
+    case 'cold':
+      return { ...fixture, coldWaypoints: null, coldTarget: null, coldLengthMm: 0 };
+    case 'hot':
+      return { ...fixture, hotWaypoints: null, hotTarget: null, hotLengthMm: 0 };
+    case 'hotReturn':
+      return { ...fixture, hotReturnWaypoints: null, hotReturnTarget: null, hotReturnLengthMm: 0 };
+    case 'drain':
+      return { ...fixture, drainWaypoints: null, drainTarget: null, drainLengthMm: 0 };
+  }
+}
+
+/**
+ * Clear every line of `fixture` whose target matches `predicate` — the routing (waypoints,
+ * target, and length) is dropped entirely, not just opened up, mirroring
+ * `clearDeflectorDuctRouting`. Shared by hardware deletion (a fixed target id) and fixture
+ * deletion (any line that targeted the now-gone fixture).
+ */
+function clearFixtureLinesMatching(
+  fixture: PlumbingFixture,
+  predicate: (target: PlumbingConnectionTarget) => boolean,
+): PlumbingFixture {
+  let next = fixture;
+  if (next.coldTarget && predicate(next.coldTarget)) {
+    next = { ...next, coldTarget: null, coldWaypoints: null, coldLengthMm: 0 };
+  }
+  if (next.hotTarget && predicate(next.hotTarget)) {
+    next = { ...next, hotTarget: null, hotWaypoints: null, hotLengthMm: 0 };
+  }
+  if (next.hotReturnTarget && predicate(next.hotReturnTarget)) {
+    next = { ...next, hotReturnTarget: null, hotReturnWaypoints: null, hotReturnLengthMm: 0 };
+  }
+  if (next.drainTarget && predicate(next.drainTarget)) {
+    next = { ...next, drainTarget: null, drainWaypoints: null, drainLengthMm: 0 };
+  }
+  return next;
+}
+
+/**
  * Resize a placed floor plan about `anchor`: the anchor point keeps its place in the
  * drawing and everything on the plan moves away from (or toward) it by `factor`.
  */
@@ -547,7 +761,15 @@ function pushPointEntityBounds(points: Point[], position: Point): void {
 function getDrawingBoundsMm(
   state: Pick<
     StoreState,
-    'zones' | 'manifolds' | 'background' | 'distributionBoxes' | 'deflectors' | 'ventZones'
+    | 'zones'
+    | 'manifolds'
+    | 'background'
+    | 'distributionBoxes'
+    | 'deflectors'
+    | 'ventZones'
+    | 'waterSources'
+    | 'sewerConnections'
+    | 'fixtures'
   >,
 ): { minX: number; minY: number; maxX: number; maxY: number } | null {
   const points: Point[] = [];
@@ -557,6 +779,9 @@ function getDrawingBoundsMm(
   for (const box of state.distributionBoxes) pushPointEntityBounds(points, box.position);
   for (const deflector of state.deflectors) pushPointEntityBounds(points, deflector.position);
   for (const ventZone of state.ventZones) points.push(...ventZone.polygon.points);
+  for (const source of state.waterSources) pushPointEntityBounds(points, source.position);
+  for (const connection of state.sewerConnections) pushPointEntityBounds(points, connection.position);
+  for (const fixture of state.fixtures) pushPointEntityBounds(points, fixture.position);
 
   const { background } = state;
   if (background?.kind === 'image') {
@@ -948,6 +1173,147 @@ function hydrateVentZone(zone: Partial<VentZone> & { polygon: Polygon }, index: 
   };
 }
 
+function getNextWaterSourceCounter(sources: WaterSource[]): number {
+  const highestAutoNumber = sources.reduce((highest, source) => {
+    const match = source.name.match(/^Water Source (\d+)$/);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+
+  return Math.max(sources.length + 1, highestAutoNumber + 1, 1);
+}
+
+function getNextSewerConnectionCounter(connections: SewerConnection[]): number {
+  const highestAutoNumber = connections.reduce((highest, connection) => {
+    const match = connection.name.match(/^Sewer Connection (\d+)$/);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+
+  return Math.max(connections.length + 1, highestAutoNumber + 1, 1);
+}
+
+function getNextFixtureCounter(fixtures: PlumbingFixture[]): number {
+  const highestAutoNumber = fixtures.reduce((highest, fixture) => {
+    const match = fixture.name.match(/^Fixture (\d+)$/);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+
+  return Math.max(fixtures.length + 1, highestAutoNumber + 1, 1);
+}
+
+/** Normalize a persisted water source — the plumbing counterpart of `hydrateManifold`/`hydrateDistributionBox`. */
+function hydrateWaterSource(source: Partial<WaterSource> & { position: Point }, index: number): WaterSource {
+  return {
+    id: typeof source.id === 'string' ? source.id : `water-source-${index + 1}`,
+    name: typeof source.name === 'string' ? source.name : `Water Source ${index + 1}`,
+    position: source.position,
+    rotationDeg: normalizeRotation(source.rotationDeg ?? 0),
+  };
+}
+
+/** Normalize a persisted sewer connection — the plumbing counterpart of `hydrateDistributionBox`. */
+function hydrateSewerConnection(
+  connection: Partial<SewerConnection> & { position: Point },
+  index: number,
+): SewerConnection {
+  return {
+    id: typeof connection.id === 'string' ? connection.id : `sewer-connection-${index + 1}`,
+    name: typeof connection.name === 'string' ? connection.name : `Sewer Connection ${index + 1}`,
+    position: connection.position,
+    rotationDeg: normalizeRotation(connection.rotationDeg ?? 0),
+  };
+}
+
+/** Validate a persisted line target, discarding anything malformed rather than trusting the file blindly. */
+function hydratePlumbingConnectionTarget(value: unknown): PlumbingConnectionTarget | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<PlumbingConnectionTarget & { fixtureId: unknown; lineType: unknown; point: unknown }>;
+
+  if (candidate.kind === 'waterSource' || candidate.kind === 'sewerConnection' || candidate.kind === 'fixture') {
+    return typeof candidate.id === 'string' ? { kind: candidate.kind, id: candidate.id } : null;
+  }
+  if (candidate.kind === 'pipe') {
+    const point = candidate.point as Partial<Point> | undefined;
+    const lineTypeIsValid =
+      candidate.lineType === 'cold' ||
+      candidate.lineType === 'hot' ||
+      candidate.lineType === 'hotReturn' ||
+      candidate.lineType === 'drain';
+    if (
+      typeof candidate.fixtureId === 'string' &&
+      lineTypeIsValid &&
+      point &&
+      Number.isFinite(point.x) &&
+      Number.isFinite(point.y)
+    ) {
+      return {
+        kind: 'pipe',
+        fixtureId: candidate.fixtureId,
+        lineType: candidate.lineType as PlumbingLineType,
+        point: { x: point.x as number, y: point.y as number },
+      };
+    }
+  }
+  return null;
+}
+
+function toPersistedFixture(fixture: PlumbingFixture): PersistedFixture {
+  return {
+    id: fixture.id,
+    name: fixture.name,
+    position: fixture.position,
+    coldDiameterMm: fixture.coldDiameterMm,
+    hotDiameterMm: fixture.hotDiameterMm,
+    hotReturnDiameterMm: fixture.hotReturnDiameterMm,
+    drainDiameterMm: fixture.drainDiameterMm,
+    coldWaypoints: fixture.coldWaypoints,
+    coldTarget: fixture.coldTarget,
+    hotWaypoints: fixture.hotWaypoints,
+    hotTarget: fixture.hotTarget,
+    hotReturnWaypoints: fixture.hotReturnWaypoints,
+    hotReturnTarget: fixture.hotReturnTarget,
+    drainWaypoints: fixture.drainWaypoints,
+    drainTarget: fixture.drainTarget,
+  };
+}
+
+function hydrateFixture(
+  fixture: Partial<PersistedFixture> & Pick<PlumbingFixture, 'id' | 'name' | 'position'>,
+): PlumbingFixture {
+  return {
+    id: fixture.id,
+    name: fixture.name,
+    position: fixture.position,
+    coldDiameterMm:
+      Number.isFinite(fixture.coldDiameterMm) && (fixture.coldDiameterMm as number) > 0
+        ? (fixture.coldDiameterMm as number)
+        : DEFAULT_SUPPLY_DIAMETER_MM,
+    hotDiameterMm:
+      Number.isFinite(fixture.hotDiameterMm) && (fixture.hotDiameterMm as number) > 0
+        ? (fixture.hotDiameterMm as number)
+        : DEFAULT_SUPPLY_DIAMETER_MM,
+    hotReturnDiameterMm:
+      Number.isFinite(fixture.hotReturnDiameterMm) && (fixture.hotReturnDiameterMm as number) > 0
+        ? (fixture.hotReturnDiameterMm as number)
+        : DEFAULT_HOT_RETURN_DIAMETER_MM,
+    drainDiameterMm:
+      Number.isFinite(fixture.drainDiameterMm) && (fixture.drainDiameterMm as number) > 0
+        ? (fixture.drainDiameterMm as number)
+        : DEFAULT_DRAIN_DIAMETER_MM,
+    coldWaypoints: Array.isArray(fixture.coldWaypoints) ? fixture.coldWaypoints : null,
+    coldTarget: hydratePlumbingConnectionTarget(fixture.coldTarget),
+    hotWaypoints: Array.isArray(fixture.hotWaypoints) ? fixture.hotWaypoints : null,
+    hotTarget: hydratePlumbingConnectionTarget(fixture.hotTarget),
+    hotReturnWaypoints: Array.isArray(fixture.hotReturnWaypoints) ? fixture.hotReturnWaypoints : null,
+    hotReturnTarget: hydratePlumbingConnectionTarget(fixture.hotReturnTarget),
+    drainWaypoints: Array.isArray(fixture.drainWaypoints) ? fixture.drainWaypoints : null,
+    drainTarget: hydratePlumbingConnectionTarget(fixture.drainTarget),
+    coldLengthMm: 0,
+    hotLengthMm: 0,
+    hotReturnLengthMm: 0,
+    drainLengthMm: 0,
+  };
+}
+
 /**
  * Recompute a zone's spiral. Leader routing is manual, so any geometry change
  * that could move the spiral's stubs invalidates the previously-drawn leader
@@ -1071,10 +1437,14 @@ function rectPolygon(a: Point, b: Point) {
  * recording what those pixels meant. Version 2 moved to millimetres outright. Version 3
  * replaced the single `manifold` field with a `manifolds` array. Version 4 added the
  * ventilation system (`distributionBoxes`, `deflectors`, `totalVentAirflowM3h`). Version 5
- * added `ventZones`. Both were purely additive, so no migration function is needed, just
- * defaults for files that predate them.
+ * added `ventZones`. Version 6 added the plumbing system (`waterSources`,
+ * `sewerConnections`, `fixtures`, and the four default-diameter settings). Version 7
+ * replaced each fixture line's `...WaterSourceId`/`drainSewerConnectionId` with a single
+ * `...Target` (so a line can connect to another fixture, not only to hardware) — a file
+ * that predates it simply loses those specific connections on load (the drawn waypoints
+ * survive; the line just opens up, the same as if its old target had been deleted).
  */
-export const CURRENT_SCHEMA_VERSION = 5;
+export const CURRENT_SCHEMA_VERSION = 7;
 
 /** Fields present only in files saved before the current schema. */
 interface LegacyPixelState {
@@ -1221,6 +1591,13 @@ export function partializeStoreState(state: StoreState): PersistedStoreState {
     distributionBoxes: state.distributionBoxes,
     deflectors: state.deflectors.map(toPersistedDeflector),
     ventZones: state.ventZones,
+    waterSources: state.waterSources,
+    sewerConnections: state.sewerConnections,
+    fixtures: state.fixtures.map(toPersistedFixture),
+    defaultColdDiameterMm: state.defaultColdDiameterMm,
+    defaultHotDiameterMm: state.defaultHotDiameterMm,
+    defaultHotReturnDiameterMm: state.defaultHotReturnDiameterMm,
+    defaultDrainDiameterMm: state.defaultDrainDiameterMm,
   };
 }
 
@@ -1258,6 +1635,15 @@ export function mergePersistedStoreState(
   const hydratedVentZones = Array.isArray(persisted.ventZones)
     ? persisted.ventZones.map((zone, index) => hydrateVentZone(zone, index))
     : currentState.ventZones;
+  const hydratedWaterSources = Array.isArray(persisted.waterSources)
+    ? persisted.waterSources.map((source, index) => hydrateWaterSource(source, index))
+    : currentState.waterSources;
+  const hydratedSewerConnections = Array.isArray(persisted.sewerConnections)
+    ? persisted.sewerConnections.map((connection, index) => hydrateSewerConnection(connection, index))
+    : currentState.sewerConnections;
+  const hydratedFixtures = Array.isArray(persisted.fixtures)
+    ? persisted.fixtures.map((fixture) => hydrateFixture(fixture))
+    : currentState.fixtures;
   const merged = {
     ...currentState,
     ...persisted,
@@ -1276,25 +1662,50 @@ export function mergePersistedStoreState(
       typeof persisted.ductDiameterMm === 'number' && persisted.ductDiameterMm > 0
         ? persisted.ductDiameterMm
         : DEFAULT_DUCT_DIAMETER_MM,
+    // Drawings saved before plumbing existed predate these settings entirely.
+    defaultColdDiameterMm:
+      typeof persisted.defaultColdDiameterMm === 'number' && persisted.defaultColdDiameterMm > 0
+        ? persisted.defaultColdDiameterMm
+        : DEFAULT_SUPPLY_DIAMETER_MM,
+    defaultHotDiameterMm:
+      typeof persisted.defaultHotDiameterMm === 'number' && persisted.defaultHotDiameterMm > 0
+        ? persisted.defaultHotDiameterMm
+        : DEFAULT_SUPPLY_DIAMETER_MM,
+    defaultHotReturnDiameterMm:
+      typeof persisted.defaultHotReturnDiameterMm === 'number' && persisted.defaultHotReturnDiameterMm > 0
+        ? persisted.defaultHotReturnDiameterMm
+        : DEFAULT_HOT_RETURN_DIAMETER_MM,
+    defaultDrainDiameterMm:
+      typeof persisted.defaultDrainDiameterMm === 'number' && persisted.defaultDrainDiameterMm > 0
+        ? persisted.defaultDrainDiameterMm
+        : DEFAULT_DRAIN_DIAMETER_MM,
     manifolds: hydratedManifolds,
     zones: hydratedZones,
     distributionBoxes: hydratedDistributionBoxes,
     deflectors: hydratedDeflectors,
     ventZones: hydratedVentZones,
+    waterSources: hydratedWaterSources,
+    sewerConnections: hydratedSewerConnections,
+    fixtures: hydratedFixtures,
   };
   const zones = recomputeZones(merged.zones, merged.manifolds);
   const deflectors = recomputeDeflectors(merged.deflectors, merged.distributionBoxes);
+  const fixtures = recomputeFixtures(merged.fixtures, merged.waterSources, merged.sewerConnections);
 
   zoneCounter = getNextZoneCounter(zones);
   manifoldCounter = getNextManifoldCounter(hydratedManifolds);
   distributionBoxCounter = getNextDistributionBoxCounter(hydratedDistributionBoxes);
   deflectorCounter = getNextDeflectorCounter(deflectors);
   ventZoneCounter = getNextVentZoneCounter(hydratedVentZones);
+  waterSourceCounter = getNextWaterSourceCounter(hydratedWaterSources);
+  sewerConnectionCounter = getNextSewerConnectionCounter(hydratedSewerConnections);
+  fixtureCounter = getNextFixtureCounter(fixtures);
 
   return {
     ...merged,
     zones,
     deflectors,
+    fixtures,
     ...createTransientState(),
   };
 }
@@ -1347,6 +1758,13 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
   distributionBoxes: [],
   deflectors: [],
   ventZones: [],
+  waterSources: [],
+  sewerConnections: [],
+  fixtures: [],
+  defaultColdDiameterMm: DEFAULT_SUPPLY_DIAMETER_MM,
+  defaultHotDiameterMm: DEFAULT_SUPPLY_DIAMETER_MM,
+  defaultHotReturnDiameterMm: DEFAULT_HOT_RETURN_DIAMETER_MM,
+  defaultDrainDiameterMm: DEFAULT_DRAIN_DIAMETER_MM,
   stageX: 0,
   stageY: 0,
   ...createTransientState(),
@@ -1374,7 +1792,14 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
   },
 
   setToolMode: (mode) =>
-    set({ toolMode: mode, drawingPoints: [], drawRectStart: null, routing: null, ductRouting: null }),
+    set({
+      toolMode: mode,
+      drawingPoints: [],
+      drawRectStart: null,
+      routing: null,
+      ductRouting: null,
+      plumbingRouting: null,
+    }),
 
   setDesignMode: (mode) =>
     set({
@@ -1384,23 +1809,27 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
       drawRectStart: null,
       routing: null,
       ductRouting: null,
+      plumbingRouting: null,
       selectedZoneId: null,
       selectedManifoldId: null,
       selectedDistributionBoxId: null,
       selectedDeflectorId: null,
       selectedVentZoneId: null,
+      selectedWaterSourceId: null,
+      selectedSewerConnectionId: null,
+      selectedFixtureId: null,
     }),
 
-  addManifold: () => {
-    const { manifolds, zones, background, distributionBoxes, deflectors, ventZones } = get();
-    const bounds = getDrawingBoundsMm({ zones, manifolds, background, distributionBoxes, deflectors, ventZones });
-    // Offset to the right of whatever's already there (manifolds included), so repeated
-    // adds naturally spread out with daylight between them instead of touching edge-to-edge
-    // (a manifold's own body is at least 800mm wide) or stacking on top of each other.
-    const position = bounds ? { x: bounds.maxX + 1500, y: (bounds.minY + bounds.maxY) / 2 } : { x: 0, y: 0 };
+  placeManifoldAt: (pt) => {
+    const { manifolds } = get();
     const id = `manifold-${Date.now()}`;
-    const manifold: Manifold = { id, name: `Manifold ${manifoldCounter++}`, position, rotationDeg: 0 };
-    set({ manifolds: [...manifolds, manifold], selectedManifoldId: id, selectedZoneId: null });
+    const manifold: Manifold = { id, name: `Manifold ${manifoldCounter++}`, position: pt, rotationDeg: 0 };
+    set({
+      manifolds: [...manifolds, manifold],
+      selectedManifoldId: id,
+      selectedZoneId: null,
+      toolMode: 'select',
+    });
   },
 
   deleteManifold: (id) => {
@@ -1447,22 +1876,31 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
 
   setDuctDiameterMm: (mm) => set({ ductDiameterMm: mm }),
 
-  addDistributionBox: () => {
+  setDefaultColdDiameterMm: (mm) => set({ defaultColdDiameterMm: mm }),
+
+  setDefaultHotDiameterMm: (mm) => set({ defaultHotDiameterMm: mm }),
+
+  setDefaultHotReturnDiameterMm: (mm) => set({ defaultHotReturnDiameterMm: mm }),
+
+  setDefaultDrainDiameterMm: (mm) => set({ defaultDrainDiameterMm: mm }),
+
+  placeDistributionBoxAt: (pt) => {
     const { distributionBoxes } = get();
-    const bounds = getDrawingBoundsMm(get());
-    // Same placement rule as `addManifold`: offset to the right of whatever's already
-    // there, so repeated adds spread out instead of stacking on top of each other.
-    const position = bounds ? { x: bounds.maxX + 1500, y: (bounds.minY + bounds.maxY) / 2 } : { x: 0, y: 0 };
     // The counter (also used for the display name) guarantees a unique id even when two
     // boxes are added within the same millisecond, which a bare `Date.now()` can't.
     const id = `distribution-box-${Date.now()}-${distributionBoxCounter}`;
     const box: VentDistributionBox = {
       id,
       name: `Distribution Box ${distributionBoxCounter++}`,
-      position,
+      position: pt,
       rotationDeg: 0,
     };
-    set({ distributionBoxes: [...distributionBoxes, box], selectedDistributionBoxId: id, selectedDeflectorId: null });
+    set({
+      distributionBoxes: [...distributionBoxes, box],
+      selectedDistributionBoxId: id,
+      selectedDeflectorId: null,
+      toolMode: 'select',
+    });
   },
 
   deleteDistributionBox: (id) => {
@@ -2292,6 +2730,398 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
       return { ...zone, polygon: { points } };
     });
     set({ ventZones: updated });
+  },
+
+  placeWaterSourceAt: (pt) => {
+    const { waterSources } = get();
+    const id = `water-source-${Date.now()}-${waterSourceCounter}`;
+    const source: WaterSource = { id, name: `Water Source ${waterSourceCounter++}`, position: pt, rotationDeg: 0 };
+    set({
+      waterSources: [...waterSources, source],
+      selectedWaterSourceId: id,
+      selectedFixtureId: null,
+      toolMode: 'select',
+    });
+  },
+
+  deleteWaterSource: (id) => {
+    const { waterSources, fixtures, sewerConnections, selectedWaterSourceId } = get();
+    const nextFixtures = recomputeFixtures(
+      fixtures.map((fixture) =>
+        clearFixtureLinesMatching(fixture, (target) => target.kind === 'waterSource' && target.id === id),
+      ),
+      waterSources,
+      sewerConnections,
+    );
+    set({
+      waterSources: waterSources.filter((source) => source.id !== id),
+      fixtures: nextFixtures,
+      selectedWaterSourceId: selectedWaterSourceId === id ? null : selectedWaterSourceId,
+    });
+  },
+
+  selectWaterSource: (id) =>
+    set({
+      selectedWaterSourceId: id,
+      ...(id ? { selectedFixtureId: null, selectedSewerConnectionId: null } : {}),
+    }),
+
+  updateWaterSourceName: (id, name) =>
+    set((state) => ({
+      waterSources: state.waterSources.map((source) => (source.id === id ? { ...source, name } : source)),
+    })),
+
+  updateWaterSourcePosition: (id, pos) => {
+    const { waterSources, fixtures, sewerConnections } = get();
+    // Lines follow a moved source the same way ducts follow a moved distribution box: the
+    // attach point is derived from the source's current position, so only lengths change.
+    const nextSources = waterSources.map((source) => (source.id === id ? { ...source, position: pos } : source));
+    set({
+      waterSources: nextSources,
+      plumbingRouting: null,
+      fixtures: recomputeFixtures(fixtures, nextSources, sewerConnections),
+    });
+  },
+
+  setWaterSourceRotation: (id, rotationDeg) => {
+    const { waterSources, fixtures, sewerConnections } = get();
+    const nextSources = waterSources.map((source) =>
+      source.id === id ? { ...source, rotationDeg: normalizeRotation(rotationDeg) } : source,
+    );
+    set({
+      waterSources: nextSources,
+      plumbingRouting: null,
+      fixtures: recomputeFixtures(fixtures, nextSources, sewerConnections),
+    });
+  },
+
+  placeSewerConnectionAt: (pt) => {
+    const { sewerConnections } = get();
+    const id = `sewer-connection-${Date.now()}-${sewerConnectionCounter}`;
+    const connection: SewerConnection = {
+      id,
+      name: `Sewer Connection ${sewerConnectionCounter++}`,
+      position: pt,
+      rotationDeg: 0,
+    };
+    set({
+      sewerConnections: [...sewerConnections, connection],
+      selectedSewerConnectionId: id,
+      selectedFixtureId: null,
+      toolMode: 'select',
+    });
+  },
+
+  deleteSewerConnection: (id) => {
+    const { sewerConnections, fixtures, waterSources, selectedSewerConnectionId } = get();
+    const nextFixtures = recomputeFixtures(
+      fixtures.map((fixture) =>
+        clearFixtureLinesMatching(fixture, (target) => target.kind === 'sewerConnection' && target.id === id),
+      ),
+      waterSources,
+      sewerConnections,
+    );
+    set({
+      sewerConnections: sewerConnections.filter((connection) => connection.id !== id),
+      fixtures: nextFixtures,
+      selectedSewerConnectionId: selectedSewerConnectionId === id ? null : selectedSewerConnectionId,
+    });
+  },
+
+  selectSewerConnection: (id) =>
+    set({
+      selectedSewerConnectionId: id,
+      ...(id ? { selectedFixtureId: null, selectedWaterSourceId: null } : {}),
+    }),
+
+  updateSewerConnectionName: (id, name) =>
+    set((state) => ({
+      sewerConnections: state.sewerConnections.map((connection) =>
+        connection.id === id ? { ...connection, name } : connection,
+      ),
+    })),
+
+  updateSewerConnectionPosition: (id, pos) => {
+    const { sewerConnections, fixtures, waterSources } = get();
+    const nextConnections = sewerConnections.map((connection) =>
+      connection.id === id ? { ...connection, position: pos } : connection,
+    );
+    set({
+      sewerConnections: nextConnections,
+      plumbingRouting: null,
+      fixtures: recomputeFixtures(fixtures, waterSources, nextConnections),
+    });
+  },
+
+  setSewerConnectionRotation: (id, rotationDeg) => {
+    const { sewerConnections, fixtures, waterSources } = get();
+    const nextConnections = sewerConnections.map((connection) =>
+      connection.id === id ? { ...connection, rotationDeg: normalizeRotation(rotationDeg) } : connection,
+    );
+    set({
+      sewerConnections: nextConnections,
+      plumbingRouting: null,
+      fixtures: recomputeFixtures(fixtures, waterSources, nextConnections),
+    });
+  },
+
+  placeFixtureAt: (pt) => {
+    const { fixtures, defaultColdDiameterMm, defaultHotDiameterMm, defaultHotReturnDiameterMm, defaultDrainDiameterMm } =
+      get();
+    // Placing several fixtures in a row (the whole point of staying in the tool) can land
+    // two clicks in the same millisecond, so the counter carries the uniqueness.
+    const id = `fixture-${Date.now()}-${fixtureCounter}`;
+    const fixture: PlumbingFixture = {
+      id,
+      name: `Fixture ${fixtureCounter++}`,
+      position: pt,
+      coldDiameterMm: defaultColdDiameterMm,
+      hotDiameterMm: defaultHotDiameterMm,
+      hotReturnDiameterMm: defaultHotReturnDiameterMm,
+      drainDiameterMm: defaultDrainDiameterMm,
+      coldWaypoints: null,
+      coldTarget: null,
+      hotWaypoints: null,
+      hotTarget: null,
+      hotReturnWaypoints: null,
+      hotReturnTarget: null,
+      drainWaypoints: null,
+      drainTarget: null,
+      coldLengthMm: 0,
+      hotLengthMm: 0,
+      hotReturnLengthMm: 0,
+      drainLengthMm: 0,
+    };
+    set({ fixtures: [...fixtures, fixture], selectedFixtureId: id, selectedWaterSourceId: null, selectedSewerConnectionId: null });
+  },
+
+  deleteFixture: (id) => {
+    const { fixtures, waterSources, sewerConnections, selectedFixtureId } = get();
+    // Other fixtures may have routed a line onto this one (see `addPlumbingRoutePoint`) —
+    // open those lines up rather than leaving them pointing at a fixture that no longer exists.
+    const remaining = fixtures.filter((fixture) => fixture.id !== id);
+    const nextFixtures = recomputeFixtures(
+      remaining.map((fixture) => clearFixtureLinesMatching(fixture, (target) => target.kind === 'fixture' && target.id === id)),
+      waterSources,
+      sewerConnections,
+    );
+    set({
+      fixtures: nextFixtures,
+      selectedFixtureId: selectedFixtureId === id ? null : selectedFixtureId,
+    });
+  },
+
+  selectFixture: (id) =>
+    set((state) => ({
+      selectedFixtureId: id,
+      // Bumped even when `id` repeats the current selection, so the panel still scrolls
+      // to it if the user switched tabs away and clicked it again.
+      fixtureFocusNonce: id ? state.fixtureFocusNonce + 1 : state.fixtureFocusNonce,
+      ...(id ? { selectedWaterSourceId: null, selectedSewerConnectionId: null } : {}),
+    })),
+
+  updateFixtureName: (id, name) =>
+    set((state) => ({
+      fixtures: state.fixtures.map((fixture) => (fixture.id === id ? { ...fixture, name } : fixture)),
+    })),
+
+  updateFixtureDiameter: (id, lineType, mm) => {
+    const normalizedMm = Math.max(1, mm);
+    set((state) => ({
+      fixtures: state.fixtures.map((fixture) => {
+        if (fixture.id !== id) return fixture;
+        switch (lineType) {
+          case 'cold':
+            return { ...fixture, coldDiameterMm: normalizedMm };
+          case 'hot':
+            return { ...fixture, hotDiameterMm: normalizedMm };
+          case 'hotReturn':
+            return { ...fixture, hotReturnDiameterMm: normalizedMm };
+          case 'drain':
+            return { ...fixture, drainDiameterMm: normalizedMm };
+        }
+      }),
+    }));
+  },
+
+  updateFixturePosition: (id, pt) => {
+    const { fixtures, waterSources, sewerConnections } = get();
+    const updated = fixtures.map((fixture) => (fixture.id === id ? { ...fixture, position: pt } : fixture));
+    set({ fixtures: recomputeFixtures(updated, waterSources, sewerConnections) });
+  },
+
+  startRoutePlumbingPipe: (fixtureId, lineType) => {
+    const fixture = get().fixtures.find((candidate) => candidate.id === fixtureId);
+    if (!fixture) return;
+
+    const fixtures = get().fixtures.map((candidate) =>
+      candidate.id === fixtureId ? clearFixtureLine(candidate, lineType) : candidate,
+    );
+    set((state) => ({
+      fixtures,
+      plumbingRouting: { fixtureId, lineType, points: [] },
+      selectedFixtureId: fixtureId,
+      fixtureFocusNonce: state.fixtureFocusNonce + 1,
+    }));
+  },
+
+  addPlumbingRoutePoint: (rawPt, lockToAngle = false) => {
+    const { plumbingRouting, fixtures, waterSources, sewerConnections, pxPerMm } = get();
+    if (!plumbingRouting) return;
+    const fixture = fixtures.find((candidate) => candidate.id === plumbingRouting.fixtureId);
+    if (!fixture) return;
+
+    const { lineType, points } = plumbingRouting;
+    const anchor = fixture.position;
+    const isDrain = lineType === 'drain';
+    // A line can finish onto hardware, another fixture's own dot, or tee into the middle of
+    // another fixture's already-drawn line of the same type — letting several fixtures share
+    // a branch back to the hardware instead of each routing there independently. `from` is
+    // the segment's own start, so a tee can be caught by crossing the target pipe, not just
+    // by landing the click precisely on its centreline.
+    const from = points.length > 0 ? points[points.length - 1] : anchor;
+    const hit = findPlumbingConnectionHit(from, rawPt, lineType, fixture.id, fixtures, waterSources, sewerConnections, pxPerMm);
+
+    if (hit) {
+      // The click that connects onto the target also fixes the last elbow's outgoing
+      // direction, so a drain's final corner gets its 45°/45° chamfer here too.
+      const finalPoints = isDrain ? chamferLastDrainElbow(anchor, points, rawPt) : points;
+      const target: PlumbingConnectionTarget = hit.target;
+      const lineUpdate: Partial<PlumbingFixture> =
+        lineType === 'cold'
+          ? { coldWaypoints: finalPoints, coldTarget: target }
+          : lineType === 'hot'
+            ? { hotWaypoints: finalPoints, hotTarget: target }
+            : lineType === 'hotReturn'
+              ? { hotReturnWaypoints: finalPoints, hotReturnTarget: target }
+              : { drainWaypoints: finalPoints, drainTarget: target };
+
+      const updatedFixtures = fixtures.map((candidate) =>
+        candidate.id === fixture.id ? { ...candidate, ...lineUpdate } : candidate,
+      );
+      set({
+        fixtures: recomputeFixtures(updatedFixtures, waterSources, sewerConnections),
+        plumbingRouting: null,
+      });
+      return;
+    }
+
+    // Routing is free-angle by default — the click lands exactly where placed — but
+    // holding Shift (`lockToAngle`) snaps the new point onto a horizontal/vertical line
+    // from the previous one instead, the same snap a duct's or leader's click always gets.
+    let nextPoint: Point;
+    if (lockToAngle) {
+      nextPoint =
+        points.length === 0
+          ? snapFirstDuctPoint(anchor, rawPt)
+          : snapElbowPoint(points[points.length - 1], rawPt, getDuctIncomingDirection(anchor, points));
+    } else {
+      // Free placement is only guarded against landing on top of the last point.
+      const from = points.length > 0 ? points[points.length - 1] : anchor;
+      if (distanceMm(from, rawPt) < MIN_PLUMBING_CLICK_DISTANCE_MM) return;
+      nextPoint = rawPt;
+    }
+
+    // A drain's corners are never left as a square 90° — chamfer the elbow that was just
+    // resolved (now that `nextPoint` fixes its outgoing direction) into two 45° bends. Any
+    // other angle (the common case when not locked) passes through untouched.
+    const priorPoints = isDrain ? chamferLastDrainElbow(anchor, points, nextPoint) : points;
+
+    set({ plumbingRouting: { ...plumbingRouting, points: [...priorPoints, nextPoint] } });
+  },
+
+  finishPlumbingRoutingAtPoint: () => {
+    const { plumbingRouting, fixtures, waterSources, sewerConnections } = get();
+    if (!plumbingRouting || plumbingRouting.points.length === 0) return;
+    const fixture = fixtures.find((candidate) => candidate.id === plumbingRouting.fixtureId);
+    if (!fixture) return;
+
+    const { lineType, points } = plumbingRouting;
+    const lineUpdate: Partial<PlumbingFixture> =
+      lineType === 'cold'
+        ? { coldWaypoints: points }
+        : lineType === 'hot'
+          ? { hotWaypoints: points }
+          : lineType === 'hotReturn'
+            ? { hotReturnWaypoints: points }
+            : { drainWaypoints: points };
+
+    const updatedFixtures = fixtures.map((candidate) =>
+      candidate.id === fixture.id ? { ...candidate, ...lineUpdate } : candidate,
+    );
+    set({
+      fixtures: recomputeFixtures(updatedFixtures, waterSources, sewerConnections),
+      plumbingRouting: null,
+    });
+  },
+
+  cancelPlumbingRouting: () => set({ plumbingRouting: null }),
+
+  updateFixtureWaypoint: (fixtureId, lineType, waypointIndex, pt) => {
+    const { fixtures, waterSources, sewerConnections } = get();
+    const fixture = fixtures.find((candidate) => candidate.id === fixtureId);
+    if (!fixture) return;
+
+    const currentWaypoints =
+      lineType === 'cold'
+        ? fixture.coldWaypoints
+        : lineType === 'hot'
+          ? fixture.hotWaypoints
+          : lineType === 'hotReturn'
+            ? fixture.hotReturnWaypoints
+            : fixture.drainWaypoints;
+    if (!currentWaypoints) return;
+
+    // Free-angle routing: the dragged point just moves — there's no orthogonal alignment
+    // to repair, so (unlike the leader's/duct's equivalent) this needs no reflow step.
+    const updatedWaypoints = currentWaypoints.map((point, i) => (i === waypointIndex ? pt : point));
+    const lineUpdate: Partial<PlumbingFixture> =
+      lineType === 'cold'
+        ? { coldWaypoints: updatedWaypoints }
+        : lineType === 'hot'
+          ? { hotWaypoints: updatedWaypoints }
+          : lineType === 'hotReturn'
+            ? { hotReturnWaypoints: updatedWaypoints }
+            : { drainWaypoints: updatedWaypoints };
+
+    const updatedFixtures = fixtures.map((candidate) =>
+      candidate.id === fixtureId ? { ...candidate, ...lineUpdate } : candidate,
+    );
+    set({ fixtures: recomputeFixtures(updatedFixtures, waterSources, sewerConnections) });
+  },
+
+  updateFixtureSegment: (fixtureId, lineType, waypointIndexA, waypointIndexB, axis, value) => {
+    const { fixtures, waterSources, sewerConnections } = get();
+    const fixture = fixtures.find((candidate) => candidate.id === fixtureId);
+    if (!fixture) return;
+
+    const currentWaypoints =
+      lineType === 'cold'
+        ? fixture.coldWaypoints
+        : lineType === 'hot'
+          ? fixture.hotWaypoints
+          : lineType === 'hotReturn'
+            ? fixture.hotReturnWaypoints
+            : fixture.drainWaypoints;
+    if (!currentWaypoints) return;
+
+    const updatedWaypoints = currentWaypoints.map((point, i) => {
+      if (i !== waypointIndexA && i !== waypointIndexB) return point;
+      return axis === 'x' ? { x: value, y: point.y } : { x: point.x, y: value };
+    });
+    const lineUpdate: Partial<PlumbingFixture> =
+      lineType === 'cold'
+        ? { coldWaypoints: updatedWaypoints }
+        : lineType === 'hot'
+          ? { hotWaypoints: updatedWaypoints }
+          : lineType === 'hotReturn'
+            ? { hotReturnWaypoints: updatedWaypoints }
+            : { drainWaypoints: updatedWaypoints };
+
+    const updatedFixtures = fixtures.map((candidate) =>
+      candidate.id === fixtureId ? { ...candidate, ...lineUpdate } : candidate,
+    );
+    set({ fixtures: recomputeFixtures(updatedFixtures, waterSources, sewerConnections) });
   },
   };
 };

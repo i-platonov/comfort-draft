@@ -7,13 +7,15 @@
   },
   "designMode": {
     "heating": "Heating",
-    "ventilation": "Ventilation"
+    "ventilation": "Ventilation",
+    "plumbing": "Plumbing"
   },
   "tabs": {
     "setup": "Setup",
     "zones": "Zones",
     "heat": "Heat",
-    "vent": "Vent"
+    "vent": "Vent",
+    "plumbing": "Plumbing"
   },
   "toolbar": {
     "select": "Select",
@@ -25,11 +27,17 @@
     "addExtractDeflector": "Add Extract Deflector",
     "routeDuct": "Route Duct",
     "fitView": "Fit View",
-    "fitViewTitle": "Zoom and pan to frame the whole drawing"
+    "fitViewTitle": "Zoom and pan to frame the whole drawing",
+    "addFixture": "Add Fixture",
+    "routeColdPipe": "Route Cold Pipe",
+    "routeHotPipe": "Route Hot Pipe",
+    "routeHotReturnPipe": "Route Hot Return Pipe",
+    "routeDrainPipe": "Route Drain Pipe"
   },
   "toolHints": {
     "drawZone": "Click to add points. Double-click or Enter to close.",
     "drawRect": "Click first corner, then click opposite corner to create a rectangle zone.",
+    "placeManifold": "Click the canvas to place the manifold.",
     "measure": "Click two points to measure the distance between them. Esc clears the tape.",
     "panBackground": "Drag anywhere to move the floor plan under your zones. Zones and the manifold stay put.",
     "editSpiral": "Drag a corner of the zone's spiral to nudge it. Click empty space to finish.",
@@ -39,13 +47,23 @@
     "placeExtractDeflector": "Click to place an extract-air deflector. Stays active, so you can place several in a row.",
     "routeDuctActive": "Drawing duct path — click to add points (horizontal/vertical only), click the distribution box to connect it, or press Enter to end it here without a box. Esc to cancel.",
     "routeDuctIdle": "Click a deflector to start routing its duct.",
-    "editVentZoneBoundary": "Drag a corner to reshape the zone. Click empty space to finish."
+    "editVentZoneBoundary": "Drag a corner to reshape the zone. Click empty space to finish.",
+    "placeFixture": "Click to place a fixture (sink, shower, toilet, ...). Stays active, so you can place several in a row.",
+    "routePlumbingPipeActive": "Drawing pipe path — click to add points at any angle (hold Shift to lock the next point to a horizontal/vertical line), click the water source, sewer connection, another fixture, or an existing pipe to tee onto it, or press Enter to end it here without connecting. Esc to cancel.",
+    "routePlumbingPipeIdle": "Click a fixture to start routing this line.",
+    "placeDistributionBox": "Click the canvas to place the distribution box.",
+    "placeWaterSource": "Click the canvas to place the water source.",
+    "placeSewerConnection": "Click the canvas to place the sewer connection."
   },
   "topToolbar": {
     "manifoldsPlaced_one": "{{count}} manifold placed",
     "manifoldsPlaced_other": "{{count}} manifolds placed",
     "distributionBoxesPlaced_one": "{{count}} distribution box placed",
-    "distributionBoxesPlaced_other": "{{count}} distribution boxes placed"
+    "distributionBoxesPlaced_other": "{{count}} distribution boxes placed",
+    "waterSourcesPlaced_one": "{{count}} water source placed",
+    "waterSourcesPlaced_other": "{{count}} water sources placed",
+    "sewerConnectionsPlaced_one": "{{count}} sewer connection placed",
+    "sewerConnectionsPlaced_other": "{{count}} sewer connections placed"
   },
   "sidePanel": {
     "appTitle": "Comfort Draft",
@@ -91,7 +109,11 @@
       "defaultSpacing": "Default spacing:",
       "defaultFlowRate": "Default flow rate:",
       "pipeSize": "Pipe size:",
-      "ductDiameter": "Duct diameter:"
+      "ductDiameter": "Duct diameter:",
+      "coldDiameter": "Cold water pipe:",
+      "hotDiameter": "Hot water pipe:",
+      "hotReturnDiameter": "Hot water return pipe:",
+      "drainDiameter": "Drain pipe:"
     },
     "manifolds": {
       "title": "Manifolds",
@@ -207,5 +229,46 @@
   },
   "canvas": {
     "areaPreview": "Area: {{value}} m²"
+  },
+  "waterSourceCard": {
+    "deleteSource": "Delete water source",
+    "angle": "Angle:",
+    "noFixturesConnected": "No fixtures connected",
+    "fixturesConnected_one": "{{count}} fixture connected",
+    "fixturesConnected_other": "{{count}} fixtures connected"
+  },
+  "sewerConnectionCard": {
+    "deleteConnection": "Delete sewer connection",
+    "angle": "Angle:",
+    "noFixturesConnected": "No fixtures connected",
+    "fixturesConnected_one": "{{count}} fixture connected",
+    "fixturesConnected_other": "{{count}} fixtures connected"
+  },
+  "fixtureCard": {
+    "cold": "Cold:",
+    "hot": "Hot:",
+    "hotReturn": "Hot return:",
+    "drain": "Drain:",
+    "routeCold": "Route cold water pipe to a water source",
+    "routeHot": "Route hot water pipe to a water source",
+    "routeHotReturn": "Route hot water circulation return to a water source",
+    "routeDrain": "Route drain pipe to the sewer connection",
+    "deleteFixture": "Delete fixture",
+    "notRouted": "Not routed",
+    "openEnd": "Open end"
+  },
+  "plumbingTab": {
+    "waterSources": "Water Sources",
+    "noWaterSources": "No water sources yet. Add one, then drag it into place on the canvas.",
+    "addWaterSource": "Add water source",
+    "sewerConnections": "Sewer Connections",
+    "noSewerConnections": "No sewer connections yet. Add one, then drag it into place on the canvas.",
+    "addSewerConnection": "Add sewer connection",
+    "fixtures": "Fixtures",
+    "noFixtures": "No fixtures yet. Use \"Add Fixture\" on the toolbar, then click the canvas to place one.",
+    "totalCold": "Total Cold: {{value}} m",
+    "totalHot": "Total Hot: {{value}} m",
+    "totalHotReturn": "Total Hot Return: {{value}} m",
+    "totalDrain": "Total Drain: {{value}} m"
   }
 }

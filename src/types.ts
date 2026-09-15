@@ -150,6 +150,8 @@ export type ToolMode =
   | 'drawRect'
   | 'editBoundary'
   | 'routeLeader'
+  /** Click the canvas to place a manifold — armed by the "Add manifold" button. */
+  | 'placeManifold'
   /** Drag a corner of a zone's spiral, sliding its two adjoining lanes to follow. */
   | 'editSpiral'
   /** Drag the imported floor plan under the drawing, leaving zones and manifold put. */
@@ -167,10 +169,26 @@ export type ToolMode =
   /** Draw a vent zone's room outline as a rectangle — the ventilation counterpart of `drawRect`. */
   | 'drawVentRect'
   /** Drag a vent zone's corners — the ventilation counterpart of `editBoundary`. */
-  | 'editVentZoneBoundary';
+  | 'editVentZoneBoundary'
+  /** Click the canvas to place a distribution box — armed by the "Add distribution box" button. */
+  | 'placeDistributionBox'
+  /** Click the canvas to place a water fixture (sink, shower, toilet, ...). */
+  | 'placeFixture'
+  /** Click the canvas to place a water source — armed by the "Add water source" button. */
+  | 'placeWaterSource'
+  /** Click the canvas to place a sewer connection — armed by the "Add sewer connection" button. */
+  | 'placeSewerConnection'
+  /** Draw a fixture's cold-water supply pipe back to a water source. */
+  | 'routeColdPipe'
+  /** Draw a fixture's hot-water supply pipe back to a water source. */
+  | 'routeHotPipe'
+  /** Draw a fixture's hot-water circulation (recirculation) return pipe back to a water source. */
+  | 'routeHotReturnPipe'
+  /** Draw a fixture's drain/soil pipe back to the sewer connection. */
+  | 'routeDrainPipe';
 
 /** Which workspace is active: which system's geometry is shown and can be edited. */
-export type DesignMode = 'heating' | 'ventilation';
+export type DesignMode = 'heating' | 'ventilation' | 'plumbing';
 
 /**
  * In-progress manual leader routing session for a single zone. The user draws
@@ -235,6 +253,100 @@ export type Background =
        */
       mmPerPixel: number;
     };
+
+/** Which of the four independent pipe networks a fixture's run belongs to. */
+export type PlumbingLineType = 'cold' | 'hot' | 'hotReturn' | 'drain';
+
+/**
+ * The main house water connection — where cold water enters and (for this app's
+ * purposes) where hot water is considered to originate, since there's no separate
+ * water-heater hardware to place. The plumbing counterpart of the heating `Manifold`
+ * and the ventilation `VentDistributionBox`.
+ */
+export interface WaterSource {
+  id: string;
+  name: string;
+  position: Point;
+  rotationDeg?: number;
+}
+
+/** Where every drain/soil pipe in the house ultimately connects — municipal sewer or septic. */
+export interface SewerConnection {
+  id: string;
+  name: string;
+  position: Point;
+  rotationDeg?: number;
+}
+
+/**
+ * What a fixture's pipe line ends at. A supply line (`cold`/`hot`/`hotReturn`) connects to
+ * the main `waterSource`, another fixture's own point, or a tee onto another fixture's
+ * *line* of the same type at whatever point along it was clicked; a `drain` connects the
+ * same way to the `sewerConnection` instead of a water source. Both `fixture` and `pipe`
+ * targets are what let several fixtures share a branch back to the hardware instead of
+ * each one running its own dedicated line all the way there — `fixture` joins right at the
+ * other fixture's own dot, `pipe` tees into the middle of a run it's already drawn.
+ */
+export type PlumbingConnectionTarget =
+  | { kind: 'waterSource'; id: string }
+  | { kind: 'sewerConnection'; id: string }
+  | { kind: 'fixture'; id: string }
+  /**
+   * `point` is the tee's location, in the *other* line's own path at the moment the branch
+   * was drawn — re-projected onto that path's current shape every time it's resolved, so a
+   * later edit to the upstream run slides the tee along with it instead of leaving it
+   * stranded in space.
+   */
+  | { kind: 'pipe'; fixtureId: string; lineType: PlumbingLineType; point: Point };
+
+/**
+ * A water outlet — sink, shower, toilet, washing machine, and so on. Up to four
+ * independent pipe runs fan out from it: cold and hot supply, an optional hot-water
+ * circulation return, and a drain. Each is manually routed and sized on its own, like a
+ * deflector's `ductWaypoints`, so a fixture that doesn't need one (e.g. a toilet has no
+ * hot line) simply leaves it `null`. Routing is entirely free-angle — waypoints are placed
+ * exactly where clicked, with no horizontal/vertical snapping.
+ */
+export interface PlumbingFixture {
+  id: string;
+  name: string;
+  position: Point;
+  coldDiameterMm: number;
+  hotDiameterMm: number;
+  hotReturnDiameterMm: number;
+  drainDiameterMm: number;
+  /**
+   * Manually-drawn interior elbows for each line — `null` means that line isn't routed
+   * (or doesn't apply to this fixture). Each line carries its own target
+   * (`coldTarget`, etc.) rather than sharing one fixture-level target, because a fixture
+   * can have one line finished open (no target yet) while a sibling line is already
+   * connected — a shared field couldn't tell those two states apart.
+   */
+  coldWaypoints: Point[] | null;
+  coldTarget: PlumbingConnectionTarget | null;
+  hotWaypoints: Point[] | null;
+  hotTarget: PlumbingConnectionTarget | null;
+  hotReturnWaypoints: Point[] | null;
+  hotReturnTarget: PlumbingConnectionTarget | null;
+  drainWaypoints: Point[] | null;
+  drainTarget: PlumbingConnectionTarget | null;
+  /** Derived lengths, mm — each a single run, recomputed whenever its line or target changes. */
+  coldLengthMm: number;
+  hotLengthMm: number;
+  hotReturnLengthMm: number;
+  drainLengthMm: number;
+}
+
+/**
+ * In-progress manual routing session for one of a fixture's four pipe lines — the
+ * plumbing counterpart of `DuctRoutingState`, generalised over which line is being drawn
+ * since a fixture can route any of the four independently.
+ */
+export interface PlumbingRoutingState {
+  fixtureId: string;
+  lineType: PlumbingLineType;
+  points: Point[];
+}
 
 export interface CalibrationState {
   active: boolean;

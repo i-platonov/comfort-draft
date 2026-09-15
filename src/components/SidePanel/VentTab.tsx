@@ -16,7 +16,8 @@ export default function VentTab() {
     deflectorFocusNonce,
     totalVentAirflowM3h,
     setTotalVentAirflowM3h,
-    addDistributionBox,
+    toolMode,
+    setToolMode,
   } = useStore();
 
   // Selecting a deflector on the canvas can leave its card scrolled out of view — bring
@@ -79,7 +80,11 @@ export default function VentTab() {
             />
           ))}
         </div>
-        <button className="btn" style={{ marginTop: '4px' }} onClick={addDistributionBox}>
+        <button
+          className={`btn ${toolMode === 'placeDistributionBox' ? 'active' : ''}`}
+          style={{ marginTop: '4px' }}
+          onClick={() => setToolMode(toolMode === 'placeDistributionBox' ? 'select' : 'placeDistributionBox')}
+        >
           <Plus /> {t('ventTab.addDistributionBox')}
         </button>
       </section>

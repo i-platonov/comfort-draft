@@ -4,6 +4,7 @@ import DxfParser from 'dxf-parser';
 import {
     Check,
     Compass,
+    Droplet,
     FolderOpen,
     Home,
     Flame,
@@ -25,8 +26,10 @@ import { UFH_STORE_STORAGE_KEY, partializeStoreState, useStore } from '../../sta
 import HeatTab from './HeatTab';
 import VentTab from './VentTab';
 import VentZonesTab from './VentZonesTab';
+import PlumbingTab from './PlumbingTab';
 import { COMMON_PIPE_OUTER_DIAMETERS_MM, PIPE_WALL_MM } from '../../geometry/heat';
 import { COMMON_DUCT_DIAMETERS_MM } from '../../geometry/ductRouting';
+import { COMMON_DRAIN_PIPE_DIAMETERS_MM, COMMON_SUPPLY_PIPE_DIAMETERS_MM } from '../../geometry/plumbingRouting';
 import ZoneCard from './ZoneCard';
 import ManifoldCard from './ManifoldCard';
 import LanguageSelector from './LanguageSelector';
@@ -64,6 +67,17 @@ export default function SidePanel() {
         setPipeOuterDiameter,
         ductDiameterMm,
         setDuctDiameterMm,
+        fixtures,
+        selectedFixtureId,
+        fixtureFocusNonce,
+        defaultColdDiameterMm,
+        setDefaultColdDiameterMm,
+        defaultHotDiameterMm,
+        setDefaultHotDiameterMm,
+        defaultHotReturnDiameterMm,
+        setDefaultHotReturnDiameterMm,
+        defaultDrainDiameterMm,
+        setDefaultDrainDiameterMm,
         background,
         toolMode,
         setToolMode,
@@ -71,7 +85,6 @@ export default function SidePanel() {
         setMaxCircuitLength,
         setDefaultSpacing,
         setDefaultFlowLpmPer100m,
-        addManifold,
         startCalibration,
         finishCalibration,
         cancelCalibration,
@@ -83,7 +96,7 @@ export default function SidePanel() {
     const [calibrationDistance, setCalibrationDistance] = useState('1000');
     const [importError, setImportError] = useState<string | null>(null);
     const [projectError, setProjectError] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<'setup' | 'zones' | 'heat' | 'vent'>('setup');
+    const [activeTab, setActiveTab] = useState<'setup' | 'zones' | 'heat' | 'vent' | 'plumbing'>('setup');
 
     // The tab bar's own options depend on which workspace is active (see below) — jump back
     // to Setup on a switch rather than leaving the panel on a tab that no longer has a button.
@@ -104,6 +117,12 @@ export default function SidePanel() {
     useEffect(() => {
         if (selectedVentZoneId) setActiveTab('zones');
     }, [ventZoneFocusNonce, selectedVentZoneId]);
+
+    // Same reasoning, for a fixture selected on the canvas — jump to the Plumbing tab so
+    // PlumbingTab can then scroll its card into view.
+    useEffect(() => {
+        if (selectedFixtureId) setActiveTab('plumbing');
+    }, [fixtureFocusNonce, selectedFixtureId]);
 
     const handleSaveProject = () => {
         const persisted = partializeStoreState(useStore.getState());
@@ -256,6 +275,12 @@ export default function SidePanel() {
                 >
                     <Wind /> {t('designMode.ventilation')}
                 </button>
+                <button
+                    className={`design-mode-btn ${designMode === 'plumbing' ? 'active' : ''}`}
+                    onClick={() => setDesignMode('plumbing')}
+                >
+                    <Droplet /> {t('designMode.plumbing')}
+                </button>
             </div>
 
             <div className="side-panel-tabs">
@@ -296,6 +321,14 @@ export default function SidePanel() {
                             <Wind /> {t('tabs.vent')}
                         </button>
                     </>
+                )}
+                {designMode === 'plumbing' && (
+                    <button
+                        className={`side-panel-tab ${activeTab === 'plumbing' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('plumbing')}
+                    >
+                        <Droplet /> {t('tabs.plumbing')} {fixtures.length > 0 && <><br/><span className="zone-count">{fixtures.length}</span></>}
+                    </button>
                 )}
             </div>
 
@@ -479,6 +512,66 @@ export default function SidePanel() {
                                 </select>
                             </div>
                         )}
+                        {designMode === 'plumbing' && (
+                            <>
+                                <div className="setting-row">
+                                    <label>{t('sidePanel.defaults.coldDiameter')}</label>
+                                    <select
+                                        className="zone-select"
+                                        value={defaultColdDiameterMm}
+                                        onChange={(event) => setDefaultColdDiameterMm(Number(event.target.value))}
+                                    >
+                                        {COMMON_SUPPLY_PIPE_DIAMETERS_MM.map((diameter) => (
+                                            <option key={diameter} value={diameter}>
+                                                {diameter} mm
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="setting-row">
+                                    <label>{t('sidePanel.defaults.hotDiameter')}</label>
+                                    <select
+                                        className="zone-select"
+                                        value={defaultHotDiameterMm}
+                                        onChange={(event) => setDefaultHotDiameterMm(Number(event.target.value))}
+                                    >
+                                        {COMMON_SUPPLY_PIPE_DIAMETERS_MM.map((diameter) => (
+                                            <option key={diameter} value={diameter}>
+                                                {diameter} mm
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="setting-row">
+                                    <label>{t('sidePanel.defaults.hotReturnDiameter')}</label>
+                                    <select
+                                        className="zone-select"
+                                        value={defaultHotReturnDiameterMm}
+                                        onChange={(event) => setDefaultHotReturnDiameterMm(Number(event.target.value))}
+                                    >
+                                        {COMMON_SUPPLY_PIPE_DIAMETERS_MM.map((diameter) => (
+                                            <option key={diameter} value={diameter}>
+                                                {diameter} mm
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="setting-row">
+                                    <label>{t('sidePanel.defaults.drainDiameter')}</label>
+                                    <select
+                                        className="zone-select"
+                                        value={defaultDrainDiameterMm}
+                                        onChange={(event) => setDefaultDrainDiameterMm(Number(event.target.value))}
+                                    >
+                                        {COMMON_DRAIN_PIPE_DIAMETERS_MM.map((diameter) => (
+                                            <option key={diameter} value={diameter}>
+                                                {diameter} mm
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </>
+                        )}
                     </section>
 
                     {designMode === 'heating' && (
@@ -497,11 +590,16 @@ export default function SidePanel() {
                                     />
                                 ))}
                             </div>
-                            <button className="btn" style={{ marginTop: '4px' }} onClick={addManifold}>
+                            <button
+                                className={`btn ${toolMode === 'placeManifold' ? 'active' : ''}`}
+                                style={{ marginTop: '4px' }}
+                                onClick={() => setToolMode(toolMode === 'placeManifold' ? 'select' : 'placeManifold')}
+                            >
                                 <Plus /> {t('sidePanel.manifolds.add')}
                             </button>
                         </section>
                     )}
+
                 </div>
             )}
 
@@ -534,6 +632,7 @@ export default function SidePanel() {
 
             {activeTab === 'heat' && <HeatTab />}
             {activeTab === 'vent' && <VentTab />}
+            {activeTab === 'plumbing' && <PlumbingTab />}
         </div>
     );
 }

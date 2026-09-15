@@ -1,9 +1,14 @@
 import {
+    Droplet,
+    Flame,
     Link2,
     Maximize2,
     MousePointer2,
     RectangleHorizontal,
+    Repeat,
     RulerDimensionLine,
+    Snowflake,
+    Waves,
     Wind,
     Waypoints,
 } from 'lucide-react';
@@ -31,13 +36,28 @@ const VENTILATION_TOOL_OPTIONS: ToolOption[] = [
   { mode: 'measure', labelKey: 'toolbar.measure', Icon: RulerDimensionLine },
 ];
 
+const PLUMBING_TOOL_OPTIONS: ToolOption[] = [
+  { mode: 'select', labelKey: 'toolbar.select', Icon: MousePointer2 },
+  { mode: 'placeFixture', labelKey: 'toolbar.addFixture', Icon: Droplet },
+  { mode: 'routeColdPipe', labelKey: 'toolbar.routeColdPipe', Icon: Snowflake },
+  { mode: 'routeHotPipe', labelKey: 'toolbar.routeHotPipe', Icon: Flame },
+  { mode: 'routeHotReturnPipe', labelKey: 'toolbar.routeHotReturnPipe', Icon: Repeat },
+  { mode: 'routeDrainPipe', labelKey: 'toolbar.routeDrainPipe', Icon: Waves },
+  { mode: 'measure', labelKey: 'toolbar.measure', Icon: RulerDimensionLine },
+];
+
 export default function Toolbar() {
   const { t } = useTranslation();
   const toolMode = useStore((state) => state.toolMode);
   const setToolMode = useStore((state) => state.setToolMode);
   const designMode = useStore((state) => state.designMode);
   const fitViewToContent = useStore((state) => state.fitViewToContent);
-  const toolOptions = designMode === 'heating' ? HEATING_TOOL_OPTIONS : VENTILATION_TOOL_OPTIONS;
+  const toolOptions =
+    designMode === 'heating'
+      ? HEATING_TOOL_OPTIONS
+      : designMode === 'ventilation'
+        ? VENTILATION_TOOL_OPTIONS
+        : PLUMBING_TOOL_OPTIONS;
 
   return (
     <div className="top-toolbar-tools">

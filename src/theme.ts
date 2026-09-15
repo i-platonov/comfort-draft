@@ -87,6 +87,25 @@ export const canvas = {
   ventSupply: palette.red400,
   /** Stale (extract) air ducts and deflectors — a pastel blue, matching the scan convention. */
   ventExtract: palette.blue400,
+
+  /** The main water connection — hardware, like the manifold and distribution box, so it stays dark. */
+  waterSourceFill: palette.slate700,
+  waterSourceStroke: palette.blue600,
+  waterSourceLabel: palette.white,
+  /** The main sewer connection — hardware, same dark body as the water source, distinguished by outline colour. */
+  sewerConnectionFill: palette.slate700,
+  sewerConnectionStroke: palette.slate500,
+  sewerConnectionLabel: palette.white,
+  /** A fixture's own dot — not itself cold/hot/drain-typed, so it gets a colour none of its four pipe lines use. */
+  fixtureFill: palette.teal500,
+  /** Cold water supply. */
+  plumbingCold: palette.blue500,
+  /** Hot water supply. */
+  plumbingHot: palette.red500,
+  /** Hot water circulation (recirculation) return — drawn dashed in the same warm hue as the supply it runs beside. */
+  plumbingHotReturn: palette.orange500,
+  /** Drain / soil pipe. */
+  plumbingDrain: palette.slate600,
 } as const;
 
 /** Zone colours, cycled as zones are added. Mid-weight hues, all legible on white. */
