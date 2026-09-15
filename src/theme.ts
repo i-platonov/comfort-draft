@@ -25,9 +25,11 @@ export const palette = {
   slate900: '#0f172a',
   blue50: '#eff6ff',
   blue100: '#dbeafe',
+  blue400: '#60a5fa',
   blue500: '#3b82f6',
   blue600: '#2563eb',
   blue700: '#1d4ed8',
+  red400: '#f87171',
   red500: '#ef4444',
   red600: '#dc2626',
   emerald500: '#10b981',
@@ -76,6 +78,15 @@ export const canvas = {
   /** The tape measure: distinct from every zone colour and from the calibration line. */
   measure: palette.violet500,
   measureLabel: palette.white,
+
+  /** The distribution box body — hardware, like the manifold, so it stays dark. */
+  distributionBoxFill: palette.slate700,
+  distributionBoxStroke: palette.emerald600,
+  distributionBoxLabel: palette.white,
+  /** Fresh (supply) air ducts and deflectors — a pastel red, matching the scan convention. */
+  ventSupply: palette.red400,
+  /** Stale (extract) air ducts and deflectors — a pastel blue, matching the scan convention. */
+  ventExtract: palette.blue400,
 } as const;
 
 /** Zone colours, cycled as zones are added. Mid-weight hues, all legible on white. */
