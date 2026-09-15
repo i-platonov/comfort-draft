@@ -32,9 +32,11 @@ const persistedZone: Zone = {
   },
   spacingMm: 150,
   paddingMm: 100,
+  flowLpmPer100m: 2,
   connectionCorner: 'bottom-left',
   startDirection: 'vertical',
   spiral: null,
+  spiralOverride: null,
   spiralLengthMm: 0,
   leaderLengthMm: 0,
   areaMm2: 0,
@@ -200,6 +202,23 @@ describe('useStore persistence', () => {
     expect(after.spiralLengthMm).not.toBe(before.spiralLengthMm);
   });
 
+  it('inserts a new vertex after the given index and recomputes the spiral', () => {
+    const store = createUfhStore();
+    store.setState({ zones: [persistedZone] });
+    store.getState().recomputeZoneSpiral(persistedZone.id);
+    const before = store.getState().zones[0];
+
+    // Insert a midpoint on the top edge (between points 0 and 1).
+    store.getState().insertZoneVertex(persistedZone.id, 0, { x: 1000, y: 0 });
+
+    const after = store.getState().zones[0];
+    expect(after.polygon.points).toHaveLength(before.polygon.points.length + 1);
+    expect(after.polygon.points[1]).toEqual({ x: 1000, y: 0 });
+    // A midpoint on an already-straight edge doesn't change the room's shape, so the
+    // spiral fill is unaffected — the insertion itself is what's under test here.
+    expect(after.spiral).not.toBeNull();
+  });
+
   it('normalizes and persists manifold rotation', async () => {
     const store = createUfhStore();
     store.setState({ manifolds: [{ id: 'manifold-1', name: 'Manifold 1', position: { x: 10, y: 20 } }] });
@@ -262,9 +281,11 @@ describe('useStore persistence', () => {
       },
       spacingMm: 400,
       paddingMm: 0,
+      flowLpmPer100m: 2,
       connectionCorner: 'bottom-left',
       startDirection: 'vertical',
       spiral: null,
+      spiralOverride: null,
       spiralLengthMm: 0,
       leaderLengthMm: 0,
       areaMm2: 0,
@@ -336,6 +357,37 @@ describe('useStore persistence', () => {
     store.getState().setManifoldRotation('manifold-1', 180);
     expect(store.getState().zones[0].leaderWaypoints).toEqual(routed.leaderWaypoints);
     expect(store.getState().zones[0].manifoldPortOffsetMm).toBe(routed.manifoldPortOffsetMm);
+  });
+
+  it('finishes a leader route at the last drawn point, with no manifold, when Enter is pressed', () => {
+    const store = createUfhStore();
+
+    store.setState({ zones: [persistedZone] });
+    store.getState().recomputeZoneSpiral(persistedZone.id);
+    store.getState().startRouteZone(persistedZone.id);
+    store.getState().addRoutePoint({ x: 3000, y: 1900 });
+    store.getState().addRoutePoint({ x: 3000, y: 2500 });
+    const drawnPoints = store.getState().routing!.points;
+    store.getState().finishRoutingAtPoint();
+
+    const routed = store.getState().zones[0];
+    expect(store.getState().routing).toBeNull();
+    expect(routed.leaderWaypoints).toEqual(drawnPoints);
+    expect(routed.manifoldId).toBeNull();
+    expect(routed.manifoldPortOffsetMm).toBeNull();
+    expect(routed.leaderLengthMm).toBeGreaterThan(0);
+  });
+
+  it('does nothing when Enter is pressed before any point has been drawn', () => {
+    const store = createUfhStore();
+
+    store.setState({ zones: [persistedZone] });
+    store.getState().recomputeZoneSpiral(persistedZone.id);
+    store.getState().startRouteZone(persistedZone.id);
+    store.getState().finishRoutingAtPoint();
+
+    expect(store.getState().routing).not.toBeNull();
+    expect(store.getState().zones[0].leaderWaypoints).toBeNull();
   });
 
   it('calibrates the imported plan without touching the design', () => {
@@ -524,5 +576,485 @@ describe('useStore persistence', () => {
     const saved = partializeStoreState(state);
     expect(saved.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     expect(JSON.stringify(saved)).not.toContain('pixelsPerMeter');
+  });
+});
+
+describe('ventilation duct routing', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('places a deflector and stays in the placing tool for placing several in a row', () => {
+    const store = createUfhStore();
+    store.getState().setToolMode('placeSupplyDeflector');
+
+    store.getState().placeDeflectorAt({ x: 1000, y: 1000 }, 'supply');
+
+    const state = store.getState();
+    expect(state.deflectors).toHaveLength(1);
+    expect(state.deflectors[0]).toMatchObject({
+      name: 'Deflector 1',
+      position: { x: 1000, y: 1000 },
+      ductType: 'supply',
+      distributionBoxId: null,
+      ductWaypoints: null,
+      ductLengthMm: 0,
+    });
+    expect(state.deflectors[0].airflowM3h).toBeGreaterThan(0);
+    expect(state.deflectors[0].airflowLabelPosition).toBe('right');
+    expect(state.selectedDeflectorId).toBe(state.deflectors[0].id);
+    // Unlike closing a zone or finishing a rect, placing a deflector doesn't reset the tool.
+    expect(state.toolMode).toBe('placeSupplyDeflector');
+  });
+
+  it('moves a deflector\'s airflow label to a different side', () => {
+    const store = createUfhStore();
+    store.getState().placeDeflectorAt({ x: 0, y: 0 }, 'supply');
+    const deflector = store.getState().deflectors[0];
+
+    store.getState().updateDeflectorAirflowLabelPosition(deflector.id, 'top');
+
+    expect(store.getState().deflectors[0].airflowLabelPosition).toBe('top');
+  });
+
+  it('routes a duct from a deflector to the distribution box clicked to finish it', () => {
+    const store = createUfhStore();
+    store.getState().addDistributionBox();
+    const box = store.getState().distributionBoxes[0];
+    store.getState().updateDistributionBoxPosition(box.id, { x: 5000, y: 1000 });
+
+    store.getState().placeDeflectorAt({ x: 1000, y: 1000 }, 'extract');
+    const deflector = store.getState().deflectors[0];
+
+    store.getState().startRouteDuct(deflector.id);
+    store.getState().addDuctRoutePoint({ x: 3000, y: 1000 });
+    // Clicking the box body finishes the route and assigns the deflector to it.
+    store.getState().addDuctRoutePoint({ x: 5000, y: 1000 });
+
+    const routed = store.getState().deflectors[0];
+    expect(store.getState().ductRouting).toBeNull();
+    expect(routed.distributionBoxId).toBe(box.id);
+    expect(routed.ductWaypoints).not.toBeNull();
+    expect(routed.ductLengthMm).toBeGreaterThan(0);
+  });
+
+  it('finishes a duct at the last drawn point, with no box, when finished without a hit', () => {
+    const store = createUfhStore();
+    store.getState().placeDeflectorAt({ x: 0, y: 0 }, 'supply');
+    const deflector = store.getState().deflectors[0];
+
+    store.getState().startRouteDuct(deflector.id);
+    store.getState().addDuctRoutePoint({ x: 1000, y: 0 });
+    const drawnPoints = store.getState().ductRouting!.points;
+    store.getState().finishDuctRoutingAtPoint();
+
+    const routed = store.getState().deflectors[0];
+    expect(store.getState().ductRouting).toBeNull();
+    expect(routed.ductWaypoints).toEqual(drawnPoints);
+    expect(routed.distributionBoxId).toBeNull();
+    expect(routed.ductLengthMm).toBeGreaterThan(0);
+  });
+
+  it('recomputes duct length, without dropping the route, when the box moves', () => {
+    const store = createUfhStore();
+    store.getState().addDistributionBox();
+    const box = store.getState().distributionBoxes[0];
+    store.getState().updateDistributionBoxPosition(box.id, { x: 5000, y: 1000 });
+
+    store.getState().placeDeflectorAt({ x: 1000, y: 1000 }, 'supply');
+    const deflector = store.getState().deflectors[0];
+    store.getState().startRouteDuct(deflector.id);
+    store.getState().addDuctRoutePoint({ x: 3000, y: 1000 });
+    store.getState().addDuctRoutePoint({ x: 5000, y: 1000 });
+
+    const before = store.getState().deflectors[0];
+
+    store.getState().updateDistributionBoxPosition(box.id, { x: 8000, y: 1000 });
+
+    const moved = store.getState().deflectors[0];
+    expect(moved.ductWaypoints).toEqual(before.ductWaypoints);
+    expect(moved.distributionBoxId).toBe(box.id);
+    expect(moved.ductLengthMm).toBeGreaterThan(before.ductLengthMm);
+  });
+
+  it('deletes ducts only for the deflectors connected to the deleted distribution box', () => {
+    const store = createUfhStore();
+    // Set up directly with distinct ids — two rapid `addDistributionBox()` calls in the
+    // same tick would otherwise both mint their id from `Date.now()`.
+    store.setState({
+      distributionBoxes: [
+        { id: 'box-a', name: 'Box A', position: { x: 5000, y: 1000 }, rotationDeg: 0 },
+        { id: 'box-b', name: 'Box B', position: { x: 15000, y: 1000 }, rotationDeg: 0 },
+      ],
+    });
+    const [boxA, boxB] = store.getState().distributionBoxes;
+
+    // Distinct ids for the same reason as the boxes above — `placeDeflectorAt` mints an
+    // id from `Date.now()`, which two back-to-back calls in one tick can collide on.
+    store.setState({
+      deflectors: [
+        {
+          id: 'deflector-a',
+          name: 'Deflector A',
+          position: { x: 1000, y: 1000 },
+          ductType: 'supply',
+          airflowM3h: 25,
+          airflowLabelPosition: 'right',
+          distributionBoxId: null,
+          ductWaypoints: null,
+          ductLengthMm: 0,
+        },
+        {
+          id: 'deflector-b',
+          name: 'Deflector B',
+          position: { x: 11000, y: 1000 },
+          ductType: 'supply',
+          airflowM3h: 25,
+          airflowLabelPosition: 'right',
+          distributionBoxId: null,
+          ductWaypoints: null,
+          ductLengthMm: 0,
+        },
+      ],
+    });
+    const [deflectorA, deflectorB] = store.getState().deflectors;
+
+    store.getState().startRouteDuct(deflectorA.id);
+    store.getState().addDuctRoutePoint({ x: 5000, y: 1000 });
+
+    store.getState().startRouteDuct(deflectorB.id);
+    store.getState().addDuctRoutePoint({ x: 15000, y: 1000 });
+
+    expect(store.getState().deflectors.map((d) => d.distributionBoxId)).toEqual([boxA.id, boxB.id]);
+
+    store.getState().deleteDistributionBox(boxA.id);
+
+    const state = store.getState();
+    expect(state.distributionBoxes.map((box) => box.id)).toEqual([boxB.id]);
+    const clearedA = state.deflectors.find((d) => d.id === deflectorA.id)!;
+    const stillRoutedB = state.deflectors.find((d) => d.id === deflectorB.id)!;
+    expect(clearedA.distributionBoxId).toBeNull();
+    expect(clearedA.ductWaypoints).toBeNull();
+    expect(clearedA.ductLengthMm).toBe(0);
+    expect(stillRoutedB.distributionBoxId).toBe(boxB.id);
+  });
+
+  it('switching design mode resets tool state without touching either design', () => {
+    const store = createUfhStore();
+    store.getState().placeDeflectorAt({ x: 0, y: 0 }, 'supply');
+    const deflector = store.getState().deflectors[0];
+    store.getState().startRouteDuct(deflector.id);
+    store.getState().addDuctRoutePoint({ x: 1000, y: 0 });
+    store.getState().selectDeflector(deflector.id);
+
+    store.getState().setDesignMode('heating');
+
+    const state = store.getState();
+    expect(state.designMode).toBe('heating');
+    expect(state.toolMode).toBe('select');
+    expect(state.ductRouting).toBeNull();
+    expect(state.selectedDeflectorId).toBeNull();
+    // The in-progress route was abandoned, not silently saved.
+    expect(state.deflectors[0].ductWaypoints).toBeNull();
+  });
+
+  it('persists the ventilation system and clears transient routing/selection on reload', async () => {
+    const store = createUfhStore();
+    store.getState().setTotalVentAirflowM3h(200);
+    store.getState().addDistributionBox();
+    const box = store.getState().distributionBoxes[0];
+    store.getState().placeDeflectorAt({ x: 1000, y: 1000 }, 'supply');
+    const deflector = store.getState().deflectors[0];
+    store.getState().updateDeflectorAirflowM3h(deflector.id, 40);
+    store.getState().startRouteDuct(deflector.id);
+    store.getState().addDuctRoutePoint({ x: 1000, y: 2000 });
+    store.getState().finishDuctRoutingAtPoint();
+    store.getState().setDesignMode('ventilation');
+
+    const serialized = window.localStorage.getItem(UFH_STORE_STORAGE_KEY);
+    expect(serialized).toContain('Distribution Box 1');
+    expect(serialized).not.toContain('"ductRouting"');
+    expect(serialized).not.toContain('"designMode"');
+
+    const reloadedStore = createUfhStore();
+    await reloadedStore.persist.rehydrate();
+    const state = reloadedStore.getState();
+
+    expect(state.totalVentAirflowM3h).toBe(200);
+    expect(state.distributionBoxes).toEqual([box]);
+    expect(state.deflectors).toHaveLength(1);
+    expect(state.deflectors[0].airflowM3h).toBe(40);
+    expect(state.deflectors[0].ductWaypoints).not.toBeNull();
+    // The view/session state is never persisted, ventilation included.
+    expect(state.designMode).toBe('heating');
+    expect(state.ductRouting).toBeNull();
+    expect(state.selectedDeflectorId).toBeNull();
+    expect(state.selectedDistributionBoxId).toBeNull();
+  });
+
+  it('hydrates a pre-ventilation project with empty defaults', async () => {
+    window.localStorage.setItem(
+      UFH_STORE_STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          schemaVersion: 3,
+          maxCircuitLengthM: 100,
+          defaultSpacingMm: 150,
+          background: null,
+          zones: [],
+          manifolds: [],
+        },
+        version: 0,
+      }),
+    );
+
+    const store = createUfhStore();
+    await store.persist.rehydrate();
+    const state = store.getState();
+
+    expect(state.distributionBoxes).toEqual([]);
+    expect(state.deflectors).toEqual([]);
+    expect(state.totalVentAirflowM3h).toBeGreaterThan(0);
+  });
+
+  it('defaults a deflector saved before airflow label positions existed to "right"', async () => {
+    window.localStorage.setItem(
+      UFH_STORE_STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          schemaVersion: 4,
+          maxCircuitLengthM: 100,
+          defaultSpacingMm: 150,
+          background: null,
+          zones: [],
+          manifolds: [],
+          distributionBoxes: [],
+          deflectors: [
+            {
+              id: 'deflector-legacy',
+              name: 'Deflector 1',
+              position: { x: 0, y: 0 },
+              ductType: 'supply',
+              airflowM3h: 25,
+              distributionBoxId: null,
+              ductWaypoints: null,
+            },
+          ],
+        },
+        version: 0,
+      }),
+    );
+
+    const store = createUfhStore();
+    await store.persist.rehydrate();
+
+    expect(store.getState().deflectors[0].airflowLabelPosition).toBe('right');
+  });
+});
+
+describe('ventilation zones', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('draws a polygon vent zone from clicked points', () => {
+    const store = createUfhStore();
+    store.getState().addDrawingPoint({ x: 0, y: 0 });
+    store.getState().addDrawingPoint({ x: 4000, y: 0 });
+    store.getState().addDrawingPoint({ x: 4000, y: 3000 });
+    store.getState().addDrawingPoint({ x: 0, y: 3000 });
+
+    store.getState().closeVentZone();
+
+    const state = store.getState();
+    expect(state.ventZones).toHaveLength(1);
+    expect(state.ventZones[0].name).toBe('Zone 1');
+    expect(state.ventZones[0].polygon.points).toHaveLength(4);
+    expect(state.selectedVentZoneId).toBe(state.ventZones[0].id);
+    expect(state.drawingPoints).toEqual([]);
+    expect(state.toolMode).toBe('select');
+  });
+
+  it('does nothing when closing a vent zone with fewer than 3 points', () => {
+    const store = createUfhStore();
+    store.getState().addDrawingPoint({ x: 0, y: 0 });
+    store.getState().addDrawingPoint({ x: 4000, y: 0 });
+
+    store.getState().closeVentZone();
+
+    expect(store.getState().ventZones).toEqual([]);
+  });
+
+  it('draws a rectangular vent zone', () => {
+    const store = createUfhStore();
+    store.getState().startDrawRect({ x: 0, y: 0 });
+    store.getState().finishDrawVentRect({ x: 4000, y: 3000 });
+
+    const state = store.getState();
+    expect(state.ventZones).toHaveLength(1);
+    expect(state.ventZones[0].polygon.points).toEqual([
+      { x: 0, y: 0 },
+      { x: 4000, y: 0 },
+      { x: 4000, y: 3000 },
+      { x: 0, y: 3000 },
+    ]);
+    expect(state.drawRectStart).toBeNull();
+    expect(state.toolMode).toBe('select');
+  });
+
+  it('resizes a vent zone from a dragged corner, same as a heating zone', () => {
+    const store = createUfhStore();
+    store.getState().startDrawRect({ x: 0, y: 0 });
+    store.getState().finishDrawVentRect({ x: 4000, y: 3000 });
+    const zone = store.getState().ventZones[0];
+
+    store.getState().updateVentZoneVertex(zone.id, 2, { x: 5000, y: 4000 });
+
+    expect(store.getState().ventZones[0].polygon.points).toEqual([
+      { x: 0, y: 0 },
+      { x: 5000, y: 0 },
+      { x: 5000, y: 4000 },
+      { x: 0, y: 4000 },
+    ]);
+  });
+
+  it('inserts a new vertex into a vent zone after the given index', () => {
+    const store = createUfhStore();
+    store.getState().startDrawRect({ x: 0, y: 0 });
+    store.getState().finishDrawVentRect({ x: 4000, y: 3000 });
+    const zone = store.getState().ventZones[0];
+
+    store.getState().insertVentZoneVertex(zone.id, 0, { x: 2000, y: 0 });
+
+    expect(store.getState().ventZones[0].polygon.points).toEqual([
+      { x: 0, y: 0 },
+      { x: 2000, y: 0 },
+      { x: 4000, y: 0 },
+      { x: 4000, y: 3000 },
+      { x: 0, y: 3000 },
+    ]);
+  });
+
+  it('deletes and renames a vent zone', () => {
+    const store = createUfhStore();
+    store.getState().startDrawRect({ x: 0, y: 0 });
+    store.getState().finishDrawVentRect({ x: 4000, y: 3000 });
+    const zone = store.getState().ventZones[0];
+
+    store.getState().updateVentZoneName(zone.id, 'Living Room');
+    expect(store.getState().ventZones[0].name).toBe('Living Room');
+
+    store.getState().deleteVentZone(zone.id);
+    expect(store.getState().ventZones).toEqual([]);
+    expect(store.getState().selectedVentZoneId).toBeNull();
+  });
+
+  it('selects a vent zone exclusively of a deflector or distribution box', () => {
+    const store = createUfhStore();
+    store.getState().startDrawRect({ x: 0, y: 0 });
+    store.getState().finishDrawVentRect({ x: 4000, y: 3000 });
+    const zone = store.getState().ventZones[0];
+
+    store.getState().placeDeflectorAt({ x: 1000, y: 1000 }, 'supply');
+    const deflector = store.getState().deflectors[0];
+
+    store.getState().selectVentZone(zone.id);
+    expect(store.getState().selectedDeflectorId).toBeNull();
+
+    store.getState().selectDeflector(deflector.id);
+    expect(store.getState().selectedVentZoneId).toBeNull();
+  });
+
+  it('bumps the focus nonce even when re-selecting the same vent zone', () => {
+    const store = createUfhStore();
+    store.getState().startDrawRect({ x: 0, y: 0 });
+    store.getState().finishDrawVentRect({ x: 4000, y: 3000 });
+    const zone = store.getState().ventZones[0];
+
+    const before = store.getState().ventZoneFocusNonce;
+    store.getState().selectVentZone(zone.id);
+    const after = store.getState().ventZoneFocusNonce;
+
+    expect(after).toBeGreaterThan(before);
+  });
+
+  it('persists vent zones and clears transient selection on reload', async () => {
+    const store = createUfhStore();
+    store.getState().startDrawRect({ x: 0, y: 0 });
+    store.getState().finishDrawVentRect({ x: 4000, y: 3000 });
+    const zone = store.getState().ventZones[0];
+    store.getState().updateVentZoneName(zone.id, 'Bedroom');
+
+    const serialized = window.localStorage.getItem(UFH_STORE_STORAGE_KEY);
+    expect(serialized).toContain('Bedroom');
+    expect(serialized).not.toContain('"selectedVentZoneId"');
+
+    const reloadedStore = createUfhStore();
+    await reloadedStore.persist.rehydrate();
+    const state = reloadedStore.getState();
+
+    expect(state.ventZones).toHaveLength(1);
+    expect(state.ventZones[0].name).toBe('Bedroom');
+    expect(state.selectedVentZoneId).toBeNull();
+  });
+
+  it('hydrates a pre-vent-zone project with an empty list', async () => {
+    window.localStorage.setItem(
+      UFH_STORE_STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          schemaVersion: 4,
+          maxCircuitLengthM: 100,
+          defaultSpacingMm: 150,
+          background: null,
+          zones: [],
+          manifolds: [],
+          distributionBoxes: [],
+          deflectors: [],
+        },
+        version: 0,
+      }),
+    );
+
+    const store = createUfhStore();
+    await store.persist.rehydrate();
+
+    expect(store.getState().ventZones).toEqual([]);
+  });
+
+  it('sets and persists the duct diameter setting', async () => {
+    const store = createUfhStore();
+    expect(store.getState().ductDiameterMm).toBe(90);
+
+    store.getState().setDuctDiameterMm(75);
+    expect(store.getState().ductDiameterMm).toBe(75);
+
+    const reloadedStore = createUfhStore();
+    await reloadedStore.persist.rehydrate();
+    expect(reloadedStore.getState().ductDiameterMm).toBe(75);
+  });
+
+  it('defaults duct diameter to DN90 for a project saved before the setting existed', async () => {
+    window.localStorage.setItem(
+      UFH_STORE_STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          schemaVersion: 4,
+          maxCircuitLengthM: 100,
+          defaultSpacingMm: 150,
+          background: null,
+          zones: [],
+          manifolds: [],
+          distributionBoxes: [],
+          deflectors: [],
+        },
+        version: 0,
+      }),
+    );
+
+    const store = createUfhStore();
+    await store.persist.rehydrate();
+
+    expect(store.getState().ductDiameterMm).toBe(90);
   });
 });

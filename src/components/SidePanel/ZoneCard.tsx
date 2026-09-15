@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { MoveHorizontal, MoveVertical, Pencil, Trash2, TriangleAlert } from 'lucide-react';
+import { MoveHorizontal, MoveVertical, Pencil, RotateCcw, Spline, Trash2, TriangleAlert } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { SpiralStartDirection, Zone, ZoneConnectionCorner } from '../../types';
 import { useStore } from '../../state/store';
 import EditableSelect from './EditableSelect';
@@ -13,31 +14,36 @@ interface Props {
 
 const SPACING_PRESETS = [100, 150, 200, 250];
 const PADDING_PRESETS = [0, 50, 100, 150];
-const CORNER_OPTIONS: Array<{ value: ZoneConnectionCorner; label: string }> = [
-  { value: 'top-left', label: 'Top-left' },
-  { value: 'top-right', label: 'Top-right' },
-  { value: 'bottom-left', label: 'Bottom-left' },
-  { value: 'bottom-right', label: 'Bottom-right' },
+const FLOW_PRESETS = [1, 1.5, 2, 3, 4];
+const CORNER_OPTIONS: Array<{ value: ZoneConnectionCorner; labelKey: string }> = [
+  { value: 'top-left', labelKey: 'zoneCard.cornerTopLeft' },
+  { value: 'top-right', labelKey: 'zoneCard.cornerTopRight' },
+  { value: 'bottom-left', labelKey: 'zoneCard.cornerBottomLeft' },
+  { value: 'bottom-right', labelKey: 'zoneCard.cornerBottomRight' },
 ];
 const START_DIRECTION_OPTIONS: Array<{
   value: SpiralStartDirection;
-  label: string;
+  labelKey: string;
+  titleKey: string;
   Icon: typeof MoveHorizontal;
 }> = [
-  { value: 'horizontal', label: 'Horizontal', Icon: MoveHorizontal },
-  { value: 'vertical', label: 'Vertical', Icon: MoveVertical },
+  { value: 'horizontal', labelKey: 'zoneCard.directionHorizontal', titleKey: 'zoneCard.spiralRunningHorizontal', Icon: MoveHorizontal },
+  { value: 'vertical', labelKey: 'zoneCard.directionVertical', titleKey: 'zoneCard.spiralRunningVertical', Icon: MoveVertical },
 ];
 
 export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props) {
+  const { t } = useTranslation();
   const {
     selectZone,
     deleteZone,
     updateZoneSpacing,
     updateZonePadding,
+    updateZoneFlowLpmPer100m,
     updateZoneConnectionCorner,
     updateZoneStartDirection,
     updateZoneName,
     setToolMode,
+    resetSpiralOverride,
   } = useStore();
   const connectedManifoldName = useStore(
     (state) => state.manifolds.find((manifold) => manifold.id === zone.manifoldId)?.name,
@@ -90,7 +96,7 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
         <div className="zone-actions">
           <button
             className="btn-icon"
-            title="Edit boundary"
+            title={t('zoneCard.editBoundary')}
             onClick={(event) => {
               event.stopPropagation();
               selectZone(zone.id);
@@ -100,8 +106,32 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
             <Pencil />
           </button>
           <button
+            className="btn-icon"
+            title={t('zoneCard.dragSpiralCorners')}
+            disabled={!zone.spiral}
+            onClick={(event) => {
+              event.stopPropagation();
+              selectZone(zone.id);
+              setToolMode('editSpiral');
+            }}
+          >
+            <Spline />
+          </button>
+          {zone.spiralOverride && (
+            <button
+              className="btn-icon"
+              title={t('zoneCard.resetSpiral')}
+              onClick={(event) => {
+                event.stopPropagation();
+                resetSpiralOverride(zone.id);
+              }}
+            >
+              <RotateCcw />
+            </button>
+          )}
+          <button
             className="btn-icon btn-danger"
-            title="Delete zone"
+            title={t('zoneCard.deleteZone')}
             onClick={(event) => {
               event.stopPropagation();
               deleteZone(zone.id);
@@ -113,7 +143,7 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
       </div>
 
       <div className="zone-spacing">
-        <label>Spacing:</label>
+        <label>{t('zoneCard.spacing')}</label>
         <div className="spacing-presets">
           <EditableSelect
             value={zone.spacingMm}
@@ -127,7 +157,7 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
       </div>
 
       <div className="zone-spacing">
-        <label>Padding:</label>
+        <label>{t('zoneCard.padding')}</label>
         <div className="spacing-presets">
           <EditableSelect
             value={zone.paddingMm}
@@ -141,7 +171,21 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
       </div>
 
       <div className="zone-spacing">
-        <label>Inlet/outlet:</label>
+        <label>{t('zoneCard.flowRate')}</label>
+        <div className="spacing-presets">
+          <EditableSelect
+            value={zone.flowLpmPer100m}
+            presets={FLOW_PRESETS}
+            min={0.1}
+            max={10}
+            onChange={(value) => updateZoneFlowLpmPer100m(zone.id, value)}
+          />
+          <span>L/min per 100m</span>
+        </div>
+      </div>
+
+      <div className="zone-spacing">
+        <label>{t('zoneCard.inletOutlet')}</label>
         <div className="spacing-presets">
           <select
             value={zone.connectionCorner}
@@ -153,7 +197,7 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
           >
             {CORNER_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
-                {option.label}
+                {t(option.labelKey)}
               </option>
             ))}
           </select>
@@ -161,42 +205,48 @@ export default function ZoneCard({ zone, isSelected, maxCircuitLengthM }: Props)
       </div>
 
       <div className="zone-spacing">
-        <label>Start:</label>
+        <label>{t('zoneCard.start')}</label>
         <div className="spacing-presets">
           {START_DIRECTION_OPTIONS.map(({ Icon, ...option }) => (
             <button
               key={option.value}
               className={`btn-preset ${zone.startDirection === option.value ? 'active' : ''}`}
-              title={`Spiral leaves the manifold running ${option.value}`}
+              title={t(option.titleKey)}
               onClick={(event) => {
                 event.stopPropagation();
                 updateZoneStartDirection(zone.id, option.value);
               }}
             >
               <Icon />
-              {option.label}
+              {t(option.labelKey)}
             </button>
           ))}
         </div>
       </div>
 
       <p className="info" style={{ fontSize: '0.75rem' }}>
-        {connectedManifoldName ? `Manifold: ${connectedManifoldName}` : 'Not connected to a manifold'}
+        {connectedManifoldName
+          ? t('zoneCard.connectedManifold', { name: connectedManifoldName })
+          : zone.leaderWaypoints
+            ? t('zoneCard.openEndNoManifold')
+            : t('zoneCard.notConnectedManifold')}
       </p>
 
       <div className={`zone-lengths ${isOverLimit ? 'over-limit' : ''}`}>
         <div className="length-row">
           <span>
-            {mm2ToSquareMeters(zone.areaMm2).toFixed(2)} m² · spiral{' '}
-            {mmToMeters(zone.spiralLengthMm).toFixed(1)}m · leader{' '}
-            {mmToMeters(zone.leaderLengthMm).toFixed(1)}m
+            {t('zoneCard.areaSummary', {
+              area: mm2ToSquareMeters(zone.areaMm2).toFixed(2),
+              spiral: mmToMeters(zone.spiralLengthMm).toFixed(1),
+              leader: mmToMeters(zone.leaderLengthMm).toFixed(1),
+            })}
           </span>
         </div>
         <div className="length-row total">
-          <span>Total:</span>
+          <span>{t('zoneCard.total')}</span>
           <span>{totalLength.toFixed(1)} m</span>
         </div>
-        {isOverLimit && <div className="warning"><TriangleAlert /> Exceeds {maxCircuitLengthM} m limit!</div>}
+        {isOverLimit && <div className="warning"><TriangleAlert /> {t('zoneCard.exceedsLimit', { limit: maxCircuitLengthM })}</div>}
       </div>
     </div>
   );

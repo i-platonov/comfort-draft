@@ -38,9 +38,19 @@ export interface Zone {
   polygon: Polygon;
   spacingMm: number;
   paddingMm: number;
+  /** This zone's own loop flow rate, in L/min per 100m of pipe — scales its flow by its own circuit length. */
+  flowLpmPer100m: number;
   connectionCorner: ZoneConnectionCorner;
   startDirection: SpiralStartDirection;
   spiral: PipePath | null;
+  /**
+   * The full spiral path after manually dragging one or more of its corners. When set,
+   * `spiral` holds this path verbatim instead of the auto-generated fill. Discarded — and
+   * `spiral` regenerated from scratch — the moment anything the fill actually depends on
+   * changes: the polygon, spacing, padding, connection corner or start direction. `null`
+   * means the spiral is untouched, auto-generated fill.
+   */
+  spiralOverride: PipePath | null;
   /** Pipe length of the spiral itself, mm. Derived — recomputed, never authored. */
   spiralLengthMm: number;
   /** Pipe length of the leader run (both supply and return), mm. Derived. */
@@ -76,16 +86,91 @@ export interface Manifold {
   rotationDeg?: number;
 }
 
+/** Which of the two independent duct networks a deflector/run belongs to. */
+export type VentDuctType = 'supply' | 'extract';
+
+/**
+ * The ventilation unit's plenum — the ductwork counterpart of the heating `Manifold`,
+ * but a separate entity since the two systems are physically different hardware and are
+ * designed in separate workspaces (see `designMode` in the store).
+ */
+export interface VentDistributionBox {
+  id: string;
+  name: string;
+  position: Point;
+  rotationDeg?: number;
+}
+
+/** Which side of the deflector dot its airflow label is drawn on. */
+export type AirflowLabelPosition = 'top' | 'bottom' | 'left' | 'right';
+
+/**
+ * A single air outlet/diffuser. Unlike a heating `Zone`, there's no polygon or fill to
+ * generate — the deflector's own position doubles as the duct's anchor, the same way a
+ * zone's spiral stub anchors its leader.
+ */
+export interface VentDeflector {
+  id: string;
+  name: string;
+  position: Point;
+  ductType: VentDuctType;
+  /** Design airflow through this deflector, m³/h. */
+  airflowM3h: number;
+  /** Which side of the dot the airflow label is drawn on — user-adjustable to dodge nearby ducts or other labels. */
+  airflowLabelPosition: AirflowLabelPosition;
+  /** Which distribution box this deflector's duct connects to. `null` until routed. */
+  distributionBoxId: string | null;
+  /**
+   * Manually-drawn duct waypoints (interior elbows only — not including the deflector
+   * itself or the box connection, which are resolved dynamically), like a zone's
+   * `leaderWaypoints`. A duct is a single line, not a supply+return pair.
+   */
+  ductWaypoints: Point[] | null;
+  /** Duct length, mm. Derived — a single run, unlike `leaderLengthMm` which counts a pair. */
+  ductLengthMm: number;
+}
+
+/**
+ * A room outline for the ventilation workspace — the counterpart of a heating `Zone`,
+ * but far simpler: there's no spiral fill or manifold connection to generate, since a
+ * vent zone exists purely to group deflectors spatially. Its airflow is never stored —
+ * see `computeVentZoneAirflow` — so there's nothing derived to keep in sync as
+ * deflectors are added, moved, or retyped.
+ */
+export interface VentZone {
+  id: string;
+  name: string;
+  color: string;
+  polygon: Polygon;
+}
+
 export type ToolMode =
   | 'select'
   | 'drawZone'
   | 'drawRect'
   | 'editBoundary'
   | 'routeLeader'
+  /** Drag a corner of a zone's spiral, sliding its two adjoining lanes to follow. */
+  | 'editSpiral'
   /** Drag the imported floor plan under the drawing, leaving zones and manifold put. */
   | 'panBackground'
   /** Tape measure: click two points to read the distance between them. */
-  | 'measure';
+  | 'measure'
+  /** Click the canvas to place a supply-air deflector. */
+  | 'placeSupplyDeflector'
+  /** Click the canvas to place an extract-air deflector. */
+  | 'placeExtractDeflector'
+  /** Draw a duct from a deflector to a distribution box — the ventilation counterpart of `routeLeader`. */
+  | 'routeDuct'
+  /** Draw a vent zone's room outline point by point — the ventilation counterpart of `drawZone`. */
+  | 'drawVentZone'
+  /** Draw a vent zone's room outline as a rectangle — the ventilation counterpart of `drawRect`. */
+  | 'drawVentRect'
+  /** Drag a vent zone's corners — the ventilation counterpart of `editBoundary`. */
+  | 'editVentZoneBoundary';
+
+/** Which workspace is active: which system's geometry is shown and can be edited. */
+export type DesignMode = 'heating' | 'ventilation';
 
 /**
  * In-progress manual leader routing session for a single zone. The user draws
@@ -95,6 +180,17 @@ export type ToolMode =
 export interface LeaderRoutingState {
   zoneId: string;
   /** Committed elbow points for the supply path currently being drawn. */
+  points: Point[];
+}
+
+/**
+ * In-progress manual duct routing session for a single deflector — the ventilation
+ * counterpart of `LeaderRoutingState`. A duct is a single line (not a pair), so unlike
+ * the leader's anchor (the midpoint between two spiral stubs), the anchor here is just
+ * the deflector's own position.
+ */
+export interface DuctRoutingState {
+  deflectorId: string;
   points: Point[];
 }
 

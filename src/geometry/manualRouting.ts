@@ -1,13 +1,13 @@
 import { Manifold, Point, Zone } from '../types';
 import { getSpiralStubs, roundPathCorners } from './spiral';
-import { distanceMm } from './length';
+import { distanceMm, pathLengthMm } from './length';
 import { ManifoldLayout, ZoneManifoldPorts, getZoneManifoldPorts } from './manifoldRouting';
 import { PIPE_BEND_RADIUS_MM } from '../pipeSpec';
 
 const EPSILON = 1e-6;
 
 /** Unit vector pointing from `from` to `to`. */
-function unitDelta(from: Point, to: Point): Point {
+export function unitDelta(from: Point, to: Point): Point {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const len = Math.hypot(dx, dy) || 1;
@@ -322,6 +322,15 @@ export function midpoint(a: Point, b: Point): Point {
 }
 
 /**
+ * Length of a leader that was finished without a manifold (see `finishRoutingAtPoint`): just
+ * the anchor plus the drawn waypoints, with no derived approach to add on. `* 2` accounts for
+ * the supply+return pair the single drawn path represents, same as every other leader length.
+ */
+export function openLeaderLengthMm(anchor: Point, waypoints: Point[]): number {
+  return pathLengthMm([anchor, ...waypoints]) * 2;
+}
+
+/**
  * The auto-generated tail of a leader: how it leaves the last drawn waypoint and arrives
  * at `target` (the midpoint between the zone's two manifold ports). The pipe may cut
  * straight across at any angle, but only for `maxDiagonalMm` — a longer approach gets one
@@ -453,6 +462,22 @@ export function buildLeaderRenderLines(
 }
 
 /**
+ * The two lines drawn for a leader that was finished without a manifold (see
+ * `finishRoutingAtPoint`): same rounding and pitch as `buildLeaderRenderLines`, but with no
+ * port to converge onto — the pair just ends in free space, offset either side of the drawn
+ * centreline.
+ */
+export function buildOpenLeaderRenderLines(leaderPath: Point[], pipeSpacingMm: number): LeaderRenderLines {
+  const halfGapMm = leaderPairPitchMm(pipeSpacingMm) / 2;
+  const rounded = roundPathCorners(leaderPath, leaderBendRadiusMm(pipeSpacingMm));
+
+  return {
+    lineA: offsetPolyline(rounded, halfGapMm),
+    lineB: offsetPolyline(rounded, -halfGapMm),
+  };
+}
+
+/**
  * Resolve every zone's manually-drawn leader waypoints into a full render/length
  * path, anchoring the ends dynamically to the zone's current spiral and its own
  * manifold's current port layout. Zones not yet connected to any manifold (or
@@ -483,6 +508,32 @@ export function buildManualLeaderPaths(
             MAX_DIAGONAL_APPROACH_MM,
           )
         : null,
+    });
+  }
+  return results;
+}
+
+export interface ManualOpenLeaderPath {
+  zoneId: string;
+  /** Spiral anchor followed by the drawn waypoints — the raw path, ending in free space. */
+  leaderPath: Point[];
+}
+
+/**
+ * Resolve every zone whose leader was finished without a manifold (see
+ * `finishRoutingAtPoint`) into its render/length path. Unlike `buildManualLeaderPaths`, there
+ * is no target to approach — the path simply ends at the last drawn waypoint.
+ */
+export function buildOpenLeaderPaths(zones: Zone[]): ManualOpenLeaderPath[] {
+  const results: ManualOpenLeaderPath[] = [];
+  for (const zone of zones) {
+    if (zone.manifoldId || !zone.leaderWaypoints || !zone.spiral || zone.spiral.length < 2) continue;
+    const stubs = getSpiralStubs(zone.spiral);
+    if (!stubs) continue;
+
+    results.push({
+      zoneId: zone.id,
+      leaderPath: [midpoint(stubs.start, stubs.end), ...zone.leaderWaypoints],
     });
   }
   return results;

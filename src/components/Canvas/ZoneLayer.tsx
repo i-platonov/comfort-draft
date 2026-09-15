@@ -4,8 +4,14 @@ import { Circle, Group, Layer, Line } from 'react-konva';
 import { Point, ToolMode, Zone } from '../../types';
 import { useStore } from '../../state/store';
 import { getSpiralStubs } from '../../geometry/spiral';
+import { findSpiralCorners } from '../../geometry/spiralEditing';
 import { isAxisAlignedRect, resizeRectFromCorner } from '../../geometry/rect';
 import { canvas, palette } from '../../theme';
+
+function setCursor(event: Konva.KonvaEventObject<Event>, cursor: string) {
+  const stage = event.target.getStage();
+  if (stage) stage.container().style.cursor = cursor;
+}
 
 const SELECTED_DASH = [6, 6];
 const DASH_PERIOD = SELECTED_DASH.reduce((sum, value) => sum + value, 0);
@@ -45,9 +51,13 @@ interface Props {
 
 const VERTEX_HANDLE_RADIUS_PX = 6;
 const STUB_DOT_RADIUS_PX = 4;
+const SPIRAL_CORNER_HANDLE_RADIUS_PX = 5;
+const EDGE_HIT_WIDTH_PX = 14;
 
 function ZoneLayer({ zones, selectedZoneId, toolMode, pxPerMm }: Props) {
   const updateZoneVertex = useStore((state) => state.updateZoneVertex);
+  const insertZoneVertex = useStore((state) => state.insertZoneVertex);
+  const updateSpiralCorner = useStore((state) => state.updateSpiralCorner);
   const selectZone = useStore((state) => state.selectZone);
   const setToolMode = useStore((state) => state.setToolMode);
   const startRouteZone = useStore((state) => state.startRouteZone);
@@ -76,6 +86,8 @@ function ZoneLayer({ zones, selectedZoneId, toolMode, pxPerMm }: Props) {
 
   const vertexHandleRadiusMm = VERTEX_HANDLE_RADIUS_PX / pxPerMm;
   const stubDotRadiusMm = STUB_DOT_RADIUS_PX / pxPerMm;
+  const spiralCornerHandleRadiusMm = SPIRAL_CORNER_HANDLE_RADIUS_PX / pxPerMm;
+  const edgeHitWidthMm = EDGE_HIT_WIDTH_PX / pxPerMm;
 
   return (
     <Layer>
@@ -190,6 +202,32 @@ function ZoneLayer({ zones, selectedZoneId, toolMode, pxPerMm }: Props) {
 
             {isSelected &&
               toolMode === 'editBoundary' &&
+              displayPoints.map((point, edgeIndex) => {
+                const next = displayPoints[(edgeIndex + 1) % displayPoints.length];
+                return (
+                  <Line
+                    key={`edge-${edgeIndex}`}
+                    points={[point.x, point.y, next.x, next.y]}
+                    stroke="transparent"
+                    strokeWidth={edgeHitWidthMm}
+                    hitStrokeWidth={edgeHitWidthMm}
+                    onMouseEnter={(event) => setCursor(event, 'copy')}
+                    onMouseLeave={(event) => setCursor(event, 'default')}
+                    onClick={(event) => {
+                      event.cancelBubble = true;
+                    }}
+                    onDblClick={(event) => {
+                      event.cancelBubble = true;
+                      const pos = event.target.getStage()?.getRelativePointerPosition();
+                      if (!pos) return;
+                      insertZoneVertex(zone.id, edgeIndex, pos);
+                    }}
+                  />
+                );
+              })}
+
+            {isSelected &&
+              toolMode === 'editBoundary' &&
               displayPoints.map((point, vertexIndex) => (
                 <Circle
                   key={vertexIndex}
@@ -218,6 +256,45 @@ function ZoneLayer({ zones, selectedZoneId, toolMode, pxPerMm }: Props) {
                       y: event.target.y(),
                     });
                     setDragPreview(null);
+                  }}
+                />
+              ))}
+
+            {isSelected &&
+              toolMode === 'editSpiral' &&
+              zone.spiral &&
+              findSpiralCorners(zone.spiral, zone.spacingMm).map((corner, cornerIndex) => (
+                <Circle
+                  key={`spiral-corner-${cornerIndex}`}
+                  x={corner.position.x}
+                  y={corner.position.y}
+                  radius={spiralCornerHandleRadiusMm}
+                  fill={zone.color}
+                  stroke={canvas.stubOutline}
+                  strokeWidth={1.5}
+                  draggable
+                  onMouseEnter={(event) => setCursor(event, 'grab')}
+                  onMouseLeave={(event) => setCursor(event, 'default')}
+                  onClick={(event) => {
+                    event.cancelBubble = true;
+                  }}
+                  onDragMove={(event) => {
+                    updateSpiralCorner(
+                      zone.id,
+                      corner,
+                      { x: event.target.x(), y: event.target.y() },
+                      false,
+                    );
+                  }}
+                  onDragEnd={(event) => {
+                    event.cancelBubble = true;
+                    updateSpiralCorner(
+                      zone.id,
+                      corner,
+                      { x: event.target.x(), y: event.target.y() },
+                      true,
+                    );
+                    setCursor(event, 'default');
                   }}
                 />
               ))}

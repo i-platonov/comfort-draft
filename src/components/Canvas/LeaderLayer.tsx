@@ -8,6 +8,8 @@ import {
   DRAG_ALIGN_TOLERANCE_MM,
   buildLeaderRenderLines,
   buildManualLeaderPaths,
+  buildOpenLeaderPaths,
+  buildOpenLeaderRenderLines,
 } from '../../geometry/manualRouting';
 import { canvas } from '../../theme';
 
@@ -50,6 +52,7 @@ function LeaderLayer({ zones, manifolds, pxPerMm }: Props) {
   const segmentDragBaseRef = useRef<number | null>(null);
 
   const paths = useMemo(() => buildManualLeaderPaths(zones, manifolds), [zones, manifolds]);
+  const openPaths = useMemo(() => buildOpenLeaderPaths(zones), [zones]);
 
   const editable = toolMode === 'routeLeader';
   const screenPxToMm = (px: number) => px / pxPerMm;
@@ -277,6 +280,117 @@ function LeaderLayer({ zones, manifolds, pxPerMm }: Props) {
                   />
                 );
               })()}
+          </Fragment>
+        );
+      })}
+
+      {openPaths.map(({ zoneId, leaderPath }) => {
+        const zone = zones.find((candidate) => candidate.id === zoneId);
+        if (!zone || !zone.leaderWaypoints) return null;
+
+        const waypoints = zone.leaderWaypoints;
+        const { lineA, lineB } = buildOpenLeaderRenderLines(leaderPath, zone.spacingMm);
+
+        return (
+          <Fragment key={zoneId}>
+            <Line
+              points={toFlatPoints(lineA)}
+              stroke={zone.color}
+              strokeWidth={2}
+              strokeScaleEnabled={false}
+              opacity={0.7}
+              listening={false}
+            />
+            <Line
+              points={toFlatPoints(lineB)}
+              stroke={zone.color}
+              strokeWidth={2}
+              strokeScaleEnabled={false}
+              opacity={0.5}
+              listening={false}
+            />
+            {editable &&
+              waypoints.map((point, index) => {
+                if (index === waypoints.length - 1) return null;
+                const next = waypoints[index + 1];
+                const axis: 'x' | 'y' | null =
+                  Math.abs(point.x - next.x) < DRAG_ALIGN_TOLERANCE_MM
+                    ? 'x'
+                    : Math.abs(point.y - next.y) < DRAG_ALIGN_TOLERANCE_MM
+                      ? 'y'
+                      : null;
+                if (!axis) return null;
+
+                const commitDrag = (event: Konva.KonvaEventObject<DragEvent>, reflow: boolean) => {
+                  if (segmentDragBaseRef.current === null) {
+                    segmentDragBaseRef.current = axis === 'x' ? point.x : point.y;
+                  }
+                  const delta = axis === 'x' ? event.target.x() : event.target.y();
+                  const value = segmentDragBaseRef.current + delta;
+                  updateLeaderSegment(zone.id, index, index + 1, axis, value, reflow);
+                  if (reflow) segmentDragBaseRef.current = null;
+                };
+
+                return (
+                  <Line
+                    key={`segment-${index}`}
+                    x={0}
+                    y={0}
+                    points={[point.x, point.y, next.x, next.y]}
+                    stroke="transparent"
+                    strokeWidth={segmentHitWidthMm}
+                    hitStrokeWidth={segmentHitWidthMm}
+                    draggable
+                    dragBoundFunc={(pos) => (axis === 'x' ? { x: pos.x, y: 0 } : { x: 0, y: pos.y })}
+                    onMouseEnter={(event) => setCursor(event, axis === 'x' ? 'col-resize' : 'row-resize')}
+                    onMouseLeave={(event) => setCursor(event, 'crosshair')}
+                    onClick={(event) => {
+                      event.cancelBubble = true;
+                    }}
+                    onDragMove={(event) => commitDrag(event, false)}
+                    onDragEnd={(event) => {
+                      event.cancelBubble = true;
+                      commitDrag(event, true);
+                      setCursor(event, 'crosshair');
+                      event.target.position({ x: 0, y: 0 });
+                    }}
+                  />
+                );
+              })}
+
+            {editable &&
+              waypoints.map((point, waypointIndex) => (
+                <Circle
+                  key={waypointIndex}
+                  x={point.x}
+                  y={point.y}
+                  radius={waypointHandleRadiusMm}
+                  fill={zone.color}
+                  stroke={canvas.stubOutline}
+                  strokeWidth={1.5}
+                  draggable
+                  onClick={(event) => {
+                    event.cancelBubble = true;
+                  }}
+                  onDragMove={(event) => {
+                    updateLeaderWaypoint(
+                      zone.id,
+                      waypointIndex,
+                      { x: event.target.x(), y: event.target.y() },
+                      false,
+                    );
+                  }}
+                  onDragEnd={(event) => {
+                    event.cancelBubble = true;
+                    updateLeaderWaypoint(
+                      zone.id,
+                      waypointIndex,
+                      { x: event.target.x(), y: event.target.y() },
+                      true,
+                    );
+                  }}
+                />
+              ))}
           </Fragment>
         );
       })}

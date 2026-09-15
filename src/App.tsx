@@ -7,9 +7,15 @@ import './App.css';
 
 export default function App() {
   const toolMode = useStore((state) => state.toolMode);
+  const routing = useStore((state) => state.routing);
+  const ductRouting = useStore((state) => state.ductRouting);
   const closeZone = useStore((state) => state.closeZone);
+  const closeVentZone = useStore((state) => state.closeVentZone);
   const cancelDrawing = useStore((state) => state.cancelDrawing);
   const cancelRouting = useStore((state) => state.cancelRouting);
+  const finishRoutingAtPoint = useStore((state) => state.finishRoutingAtPoint);
+  const cancelDuctRouting = useStore((state) => state.cancelDuctRouting);
+  const finishDuctRoutingAtPoint = useStore((state) => state.finishDuctRoutingAtPoint);
   const clearMeasurement = useStore((state) => state.clearMeasurement);
 
   const handleKeyDown = useCallback(
@@ -18,18 +24,48 @@ export default function App() {
         closeZone();
       }
 
+      if (event.key === 'Enter' && toolMode === 'drawVentZone') {
+        closeVentZone();
+      }
+
+      if (event.key === 'Enter' && toolMode === 'routeLeader' && routing) {
+        // End the leader right here, with no manifold involved — an alternative to clicking
+        // a manifold to finish it.
+        finishRoutingAtPoint();
+      }
+
+      if (event.key === 'Enter' && toolMode === 'routeDuct' && ductRouting) {
+        // End the duct right here, with no distribution box involved — the ventilation
+        // counterpart of finishing a leader route without a manifold.
+        finishDuctRoutingAtPoint();
+      }
+
       if (event.key === 'Escape') {
         // A tape can be left on screen as a reference while working in another tool, so
         // Escape drops it whatever mode you're in, not only while measuring.
         clearMeasurement();
         if (toolMode === 'routeLeader') {
           cancelRouting();
+        } else if (toolMode === 'routeDuct') {
+          cancelDuctRouting();
         } else {
           cancelDrawing();
         }
       }
     },
-    [cancelDrawing, cancelRouting, clearMeasurement, closeZone, toolMode],
+    [
+      cancelDrawing,
+      cancelDuctRouting,
+      cancelRouting,
+      clearMeasurement,
+      closeZone,
+      closeVentZone,
+      ductRouting,
+      finishDuctRoutingAtPoint,
+      finishRoutingAtPoint,
+      routing,
+      toolMode,
+    ],
   );
 
   useEffect(() => {

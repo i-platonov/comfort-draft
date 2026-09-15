@@ -1,24 +1,25 @@
 import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Manifold } from '../../types';
+import { VentDistributionBox } from '../../types';
 import { useStore } from '../../state/store';
 
 interface Props {
-  manifold: Manifold;
+  box: VentDistributionBox;
   isSelected: boolean;
-  zoneCount: number;
+  deflectorCount: number;
 }
 
-export default function ManifoldCard({ manifold, isSelected, zoneCount }: Props) {
+export default function DistributionBoxCard({ box, isSelected, deflectorCount }: Props) {
   const { t } = useTranslation();
-  const { selectManifold, deleteManifold, updateManifoldName, setManifoldRotation } = useStore();
+  const { selectDistributionBox, deleteDistributionBox, updateDistributionBoxName, setDistributionBoxRotation } =
+    useStore();
   const [editingName, setEditingName] = useState(false);
-  const [nameValue, setNameValue] = useState(manifold.name);
+  const [nameValue, setNameValue] = useState(box.name);
 
   const commitName = () => {
-    const nextName = nameValue.trim() || manifold.name;
-    updateManifoldName(manifold.id, nextName);
+    const nextName = nameValue.trim() || box.name;
+    updateDistributionBoxName(box.id, nextName);
     setNameValue(nextName);
     setEditingName(false);
   };
@@ -26,7 +27,7 @@ export default function ManifoldCard({ manifold, isSelected, zoneCount }: Props)
   return (
     <div
       className={`zone-card ${isSelected ? 'selected' : ''}`}
-      onClick={() => selectManifold(manifold.id)}
+      onClick={() => selectDistributionBox(box.id)}
     >
       <div className="zone-card-header">
         {editingName ? (
@@ -47,19 +48,19 @@ export default function ManifoldCard({ manifold, isSelected, zoneCount }: Props)
             className="zone-name"
             onDoubleClick={() => {
               setEditingName(true);
-              setNameValue(manifold.name);
+              setNameValue(box.name);
             }}
           >
-            {manifold.name}
+            {box.name}
           </span>
         )}
         <div className="zone-actions">
           <button
             className="btn-icon btn-danger"
-            title={t('manifoldCard.deleteManifold')}
+            title={t('distributionBoxCard.deleteBox')}
             onClick={(event) => {
               event.stopPropagation();
-              deleteManifold(manifold.id);
+              deleteDistributionBox(box.id);
             }}
           >
             <Trash2 />
@@ -68,16 +69,16 @@ export default function ManifoldCard({ manifold, isSelected, zoneCount }: Props)
       </div>
 
       <div className="setting-row">
-        <label>{t('manifoldCard.angle')}</label>
+        <label>{t('distributionBoxCard.angle')}</label>
         <input
           type="number"
           step={1}
-          value={manifold.rotationDeg ?? 0}
+          value={box.rotationDeg ?? 0}
           onClick={(event) => event.stopPropagation()}
           onChange={(event) => {
             const next = Number(event.target.value);
             if (Number.isFinite(next)) {
-              setManifoldRotation(manifold.id, next);
+              setDistributionBoxRotation(box.id, next);
             }
           }}
         />
@@ -85,7 +86,9 @@ export default function ManifoldCard({ manifold, isSelected, zoneCount }: Props)
       </div>
 
       <p className="info">
-        {zoneCount === 0 ? t('manifoldCard.noZonesConnected') : t('manifoldCard.zonesConnected', { count: zoneCount })}
+        {deflectorCount === 0
+          ? t('distributionBoxCard.noDeflectorsConnected')
+          : t('distributionBoxCard.deflectorsConnected', { count: deflectorCount })}
       </p>
     </div>
   );

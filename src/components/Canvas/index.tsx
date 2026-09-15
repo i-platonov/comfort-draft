@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Konva from 'konva';
 import { Arrow, Circle, Layer, Line, Rect, Stage, Text } from 'react-konva';
+import { useTranslation } from 'react-i18next';
 import { useStore } from '../../state/store';
 import { getSpiralStubs, roundPathCorners } from '../../geometry/spiral';
 import { mm2ToSquareMeters } from '../../geometry/length';
@@ -21,13 +22,18 @@ import LeaderLayer from './LeaderLayer';
 import ManifoldLayer from './ManifoldLayer';
 import MeasureLayer from './MeasureLayer';
 import ZoneLayer from './ZoneLayer';
+import VentLayer from './VentLayer';
+import VentZoneLayer from './VentZoneLayer';
 import { canvas } from '../../theme';
+import { getDuctIncomingDirection, snapFirstDuctPoint } from '../../geometry/ductRouting';
+import { DUCT_CORNER_RADIUS_MM, generateZigzagPath } from '../../geometry/zigzag';
 
 const PANEL_WIDTH = 320;
 const TOP_TOOLBAR_HEIGHT = 44;
 const ZOOM_FACTOR = 1.15;
 
 export default function Canvas() {
+  const { t } = useTranslation();
   const stageRef = useRef<Konva.Stage>(null);
   const [viewport, setViewport] = useState({
     width: Math.max(window.innerWidth - PANEL_WIDTH, 320),
@@ -44,6 +50,13 @@ export default function Canvas() {
     zones,
     selectedZoneId,
     manifolds,
+    designMode,
+    distributionBoxes,
+    deflectors,
+    ventZones,
+    selectedVentZoneId,
+    ductDiameterMm,
+    ductRouting,
     toolMode,
     drawingPoints,
     drawRectStart,
@@ -55,14 +68,21 @@ export default function Canvas() {
     stageY,
     addDrawingPoint,
     closeZone,
+    closeVentZone,
     startDrawRect,
     finishDrawRect,
+    finishDrawVentRect,
     addRoutePoint,
+    placeDeflectorAt,
+    addDuctRoutePoint,
     addCalibrationPoint,
     addMeasurePoint,
     setStageTransform,
     selectZone,
     selectManifold,
+    selectDeflector,
+    selectDistributionBox,
+    selectVentZone,
     setToolMode,
     moveBackground,
   } = useStore();
@@ -108,14 +128,17 @@ export default function Canvas() {
     const position = getPointerPos();
     if (!position) return;
 
-    if (toolMode === 'drawZone') {
+    if (toolMode === 'drawZone' || toolMode === 'drawVentZone') {
       addDrawingPoint(position);
       return;
     }
 
-    if (toolMode === 'drawRect') {
+    if (toolMode === 'drawRect' || toolMode === 'drawVentRect') {
       if (!drawRectStart) {
         startDrawRect(position);
+      } else if (toolMode === 'drawVentRect') {
+        finishDrawVentRect(position);
+        setMousePos(null);
       } else {
         finishDrawRect(position);
         setMousePos(null);
@@ -130,6 +153,23 @@ export default function Canvas() {
       return;
     }
 
+    if (toolMode === 'placeSupplyDeflector') {
+      placeDeflectorAt(position, 'supply');
+      return;
+    }
+
+    if (toolMode === 'placeExtractDeflector') {
+      placeDeflectorAt(position, 'extract');
+      return;
+    }
+
+    if (toolMode === 'routeDuct') {
+      if (ductRouting) {
+        addDuctRoutePoint(position);
+      }
+      return;
+    }
+
     if (toolMode === 'measure') {
       addMeasurePoint(position);
       return;
@@ -140,26 +180,41 @@ export default function Canvas() {
       return;
     }
 
-    // Clicked empty canvas: finalize any boundary edit and deselect.
-    if (toolMode === 'select' || toolMode === 'editBoundary') {
+    // Clicked empty canvas: finalize any boundary/spiral edit and deselect.
+    if (
+      toolMode === 'select' ||
+      toolMode === 'editBoundary' ||
+      toolMode === 'editSpiral' ||
+      toolMode === 'editVentZoneBoundary'
+    ) {
       selectZone(null);
       selectManifold(null);
-      if (toolMode === 'editBoundary') {
+      selectDeflector(null);
+      selectDistributionBox(null);
+      selectVentZone(null);
+      if (toolMode === 'editBoundary' || toolMode === 'editSpiral' || toolMode === 'editVentZoneBoundary') {
         setToolMode('select');
       }
     }
   }, [
     addCalibrationPoint,
     addDrawingPoint,
+    addDuctRoutePoint,
     addMeasurePoint,
     addRoutePoint,
     calibration.active,
     drawRectStart,
+    ductRouting,
     finishDrawRect,
+    finishDrawVentRect,
     getPointerPos,
+    placeDeflectorAt,
     routing,
     selectZone,
     selectManifold,
+    selectDeflector,
+    selectDistributionBox,
+    selectVentZone,
     setToolMode,
     startDrawRect,
     toolMode,
@@ -169,7 +224,10 @@ export default function Canvas() {
     if (toolMode === 'drawZone') {
       closeZone();
     }
-  }, [closeZone, toolMode]);
+    if (toolMode === 'drawVentZone') {
+      closeVentZone();
+    }
+  }, [closeVentZone, closeZone, toolMode]);
 
   // Background panning is a press-drag-release on the stage itself rather than a draggable
   // Konva node: a DXF's thin lines are near-impossible to grab, so the whole canvas is the
@@ -193,7 +251,7 @@ export default function Canvas() {
       }
       return;
     }
-    if (toolMode === 'drawRect' && drawRectStart) {
+    if ((toolMode === 'drawRect' || toolMode === 'drawVentRect') && drawRectStart) {
       const pos = getPointerPos();
       if (pos) setMousePos(pos);
       return;
@@ -203,12 +261,17 @@ export default function Canvas() {
       if (pos) setMousePos(pos);
       return;
     }
+    if (toolMode === 'routeDuct' && ductRouting) {
+      const pos = getPointerPos();
+      if (pos) setMousePos(pos);
+      return;
+    }
     // While the tape's far end is unplaced, follow the pointer so the reading is live.
     if (toolMode === 'measure' && measurement.start && !measurement.end) {
       const pos = getPointerPos();
       if (pos) setMousePos(pos);
     }
-  }, [drawRectStart, getPointerPos, measurement, moveBackground, routing, toolMode]);
+  }, [drawRectStart, ductRouting, getPointerPos, measurement, moveBackground, routing, toolMode]);
 
   const handleWheel = useCallback(
     (event: Konva.KonvaEventObject<WheelEvent>) => {
@@ -237,13 +300,22 @@ export default function Canvas() {
   );
 
   const drawingFlatPoints = drawingPoints.flatMap((point) => [point.x, point.y]);
+  // The zone-drawing preview is UI chrome, not pipe/duct hardware, so it's sized in
+  // screen pixels like the tape measure's furniture — otherwise its stroke width and
+  // dot radius (authored in mm) shrink to near-invisible at the app's typical zoom.
+  const screenPxToMm = (px: number) => px / pxPerMm;
 
   const cursor =
     calibration.active ||
     toolMode === 'drawZone' ||
     toolMode === 'drawRect' ||
     toolMode === 'routeLeader' ||
-    toolMode === 'measure'
+    toolMode === 'measure' ||
+    toolMode === 'placeSupplyDeflector' ||
+    toolMode === 'placeExtractDeflector' ||
+    toolMode === 'routeDuct' ||
+    toolMode === 'drawVentZone' ||
+    toolMode === 'drawVentRect'
       ? 'crosshair'
       : toolMode === 'panBackground'
         ? 'grab'
@@ -283,9 +355,36 @@ export default function Canvas() {
     };
   })();
 
-  // Rectangle preview while in drawRect mode
+  // Live preview of the duct path (rendered as a zigzag double line) while routing.
+  const ductRoutePreview = (() => {
+    if (!ductRouting || !mousePos) return null;
+    const deflector = deflectors.find((candidate) => candidate.id === ductRouting.deflectorId);
+    if (!deflector) return null;
+
+    const anchor = deflector.position;
+    const previewPoint =
+      ductRouting.points.length === 0
+        ? snapFirstDuctPoint(anchor, mousePos)
+        : snapElbowPoint(
+            ductRouting.points[ductRouting.points.length - 1],
+            mousePos,
+            getDuctIncomingDirection(anchor, ductRouting.points),
+          );
+
+    const drawn = [anchor, ...ductRouting.points, previewPoint];
+    const rounded = roundPathCorners(drawn, DUCT_CORNER_RADIUS_MM);
+    const zigzag = generateZigzagPath(rounded);
+
+    return {
+      path: drawn,
+      zigzag,
+      color: deflector.ductType === 'supply' ? canvas.ventSupply : canvas.ventExtract,
+    };
+  })();
+
+  // Rectangle preview while in drawRect (or its ventilation counterpart) mode
   const rectPreview =
-    toolMode === 'drawRect' && drawRectStart && mousePos
+    (toolMode === 'drawRect' || toolMode === 'drawVentRect') && drawRectStart && mousePos
       ? {
           x: Math.min(drawRectStart.x, mousePos.x),
           y: Math.min(drawRectStart.y, mousePos.y),
@@ -339,25 +438,42 @@ export default function Canvas() {
         />
       )}
 
-      <ZoneLayer
-        zones={zones}
-        selectedZoneId={selectedZoneId}
-        toolMode={toolMode}
-        pxPerMm={pxPerMm}
-      />
-      <LeaderLayer zones={zones} manifolds={manifolds} pxPerMm={pxPerMm} />
-      <ManifoldLayer manifolds={manifolds} zones={zones} pxPerMm={pxPerMm} />
+      {designMode === 'heating' && (
+        <>
+          <ZoneLayer
+            zones={zones}
+            selectedZoneId={selectedZoneId}
+            toolMode={toolMode}
+            pxPerMm={pxPerMm}
+          />
+          <LeaderLayer zones={zones} manifolds={manifolds} pxPerMm={pxPerMm} />
+          <ManifoldLayer manifolds={manifolds} zones={zones} pxPerMm={pxPerMm} />
+        </>
+      )}
+      {designMode === 'ventilation' && (
+        <>
+          <VentZoneLayer
+            ventZones={ventZones}
+            selectedVentZoneId={selectedVentZoneId}
+            toolMode={toolMode}
+            pxPerMm={pxPerMm}
+          />
+          <VentLayer distributionBoxes={distributionBoxes} deflectors={deflectors} pxPerMm={pxPerMm} />
+        </>
+      )}
       <MeasureLayer measurement={measurement} pointer={mousePos} pxPerMm={pxPerMm} />
 
       <Layer>
         {/* Free-polygon drawing preview */}
-        {toolMode === 'drawZone' && drawingPoints.length > 0 && (
+        {(toolMode === 'drawZone' || toolMode === 'drawVentZone') && drawingPoints.length > 0 && (
           <>
             <Line
               points={drawingFlatPoints}
               stroke={canvas.drawPreview}
-              strokeWidth={2}
-              dash={[5, 3]}
+              strokeWidth={3}
+              strokeScaleEnabled={false}
+              dash={[8, 4]}
+              lineJoin="round"
               listening={false}
             />
             {drawingPoints.map((point, index) => (
@@ -365,8 +481,11 @@ export default function Canvas() {
                 key={index}
                 x={point.x}
                 y={point.y}
-                radius={4}
+                radius={screenPxToMm(6)}
                 fill={canvas.drawPreview}
+                stroke={canvas.selectionDashAlt}
+                strokeWidth={1.5}
+                strokeScaleEnabled={false}
                 listening={false}
               />
             ))}
@@ -404,6 +523,27 @@ export default function Canvas() {
           </>
         )}
 
+        {/* Manual duct-routing preview: the single drawn path, at true DN90 pipe scale like the committed duct */}
+        {ductRoutePreview && (
+          <>
+            <Arrow
+              points={ductRoutePreview.zigzag.flatMap((point) => [point.x, point.y])}
+              stroke={ductRoutePreview.color}
+              strokeWidth={ductDiameterMm}
+              fill={ductRoutePreview.color}
+              lineCap="round"
+              lineJoin="round"
+              pointerLength={ductDiameterMm * 1.5}
+              pointerWidth={ductDiameterMm}
+              opacity={0.6}
+              listening={false}
+            />
+            {ductRoutePreview.path.slice(0, -1).map((point, index) => (
+              <Circle key={index} x={point.x} y={point.y} radius={ductDiameterMm / 4} fill={ductRoutePreview.color} listening={false} />
+            ))}
+          </>
+        )}
+
         {/* Rectangle drawing preview */}
         {drawRectStart && (
           <Circle x={drawRectStart.x} y={drawRectStart.y} radius={5} fill={canvas.drawPreview} listening={false} />
@@ -425,7 +565,7 @@ export default function Canvas() {
               <Text
                 x={rectPreview.x + 6}
                 y={rectPreview.y + 6}
-                text={`Area: ${rectPreviewAreaM2.toFixed(2)} m²`}
+                text={t('canvas.areaPreview', { value: rectPreviewAreaM2.toFixed(2) })}
                 fill={canvas.drawPreview}
                 fontSize={14}
                 fontStyle="bold"

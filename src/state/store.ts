@@ -1,14 +1,22 @@
 import { create, type StateCreator } from 'zustand';
 import { createJSONStorage, persist, type PersistOptions } from 'zustand/middleware';
 import {
+  AirflowLabelPosition,
   Background,
   CalibrationState,
+  DesignMode,
+  DuctRoutingState,
   LeaderRoutingState,
   Manifold,
   MeasurementState,
   Point,
+  Polygon,
   SpiralStartDirection,
   ToolMode,
+  VentDeflector,
+  VentDistributionBox,
+  VentDuctType,
+  VentZone,
   Zone,
   ZoneConnectionCorner,
 } from '../types';
@@ -31,10 +39,19 @@ import {
   getStubExitDirection,
   isPointOnManifold,
   midpoint,
+  openLeaderLengthMm,
   reflowLeaderWaypoints,
   snapElbowPoint,
   snapFirstLegPoint,
 } from '../geometry/manualRouting';
+import { setSpiralCorner, type SpiralCorner } from '../geometry/spiralEditing';
+import {
+  buildDeflectorDuctPaths,
+  DEFAULT_DUCT_DIAMETER_MM,
+  getDuctIncomingDirection,
+  isPointOnDistributionBox,
+  snapFirstDuctPoint,
+} from '../geometry/ductRouting';
 
 const MANIFOLD_CLICK_MARGIN_MM = 100;
 const MIN_LEADER_SEGMENT_MM = 150;
@@ -42,7 +59,13 @@ const MIN_LEADER_SEGMENT_MM = 150;
 const ZONE_RESIZE_ROUTING_TOLERANCE_MM = 200;
 
 const DEFAULT_ZONE_PADDING_MM = 100;
+const DEFAULT_ZONE_FLOW_LPM_PER_100M = 2;
 const DEFAULT_ZONE_CONNECTION_CORNER: ZoneConnectionCorner = 'bottom-left';
+
+const DISTRIBUTION_BOX_CLICK_MARGIN_MM = 100;
+const MIN_DUCT_SEGMENT_MM = 150;
+const DEFAULT_DEFLECTOR_AIRFLOW_M3H = 25;
+const DEFAULT_TOTAL_VENT_AIRFLOW_M3H = 150;
 
 /**
  * Historically each connection corner was hard-wired to a single manifold edge:
@@ -74,8 +97,8 @@ interface StoreState {
   supplyTempC: number;
   /** Flow-water return temperature at the manifold, °C. */
   returnTempC: number;
-  /** Loop flow rate, in L/min per 100m of pipe — scales each zone's flow by its own circuit length. */
-  flowLpmPer100m: number;
+  /** Default loop flow rate for newly-created zones, in L/min per 100m of pipe — each zone can be tuned individually afterward. */
+  defaultFlowLpmPer100m: number;
   /** Outside diameter of the loop tube, mm. The wall is taken as 2 mm, as on the common sizes. */
   pipeOuterDiameterMm: number;
   /** Discriminated-union background layer (DXF or raster image, or null) */
@@ -84,6 +107,31 @@ interface StoreState {
   selectedZoneId: string | null;
   manifolds: Manifold[];
   selectedManifoldId: string | null;
+  /** Which workspace is active — see `DesignMode`. Not persisted, like `toolMode`. */
+  designMode: DesignMode;
+  /** Rated total air exchange for the whole ventilation system, m³/h. */
+  totalVentAirflowM3h: number;
+  /** Nominal duct diameter for newly-drawn ducts, mm — DN75 or DN90. Project-wide, like the heating pipe size. */
+  ductDiameterMm: number;
+  distributionBoxes: VentDistributionBox[];
+  selectedDistributionBoxId: string | null;
+  deflectors: VentDeflector[];
+  selectedDeflectorId: string | null;
+  /**
+   * Bumped on every deflector selection, even a re-click of the one already selected —
+   * unlike `selectedDeflectorId`, which doesn't change in that case. The side panel
+   * watches this (not just the id) to know when to scroll a card into view, since a
+   * user who switched tabs away and clicked the same deflector again still wants it
+   * brought back on screen.
+   */
+  deflectorFocusNonce: number;
+  /** Room outlines for the ventilation workspace — see `VentZone`. */
+  ventZones: VentZone[];
+  selectedVentZoneId: string | null;
+  /** Same purpose as `deflectorFocusNonce`, for vent zone selection. */
+  ventZoneFocusNonce: number;
+  /** In-progress manual duct-routing session, if any */
+  ductRouting: DuctRoutingState | null;
   toolMode: ToolMode;
   drawingPoints: Point[];
   /** First corner for rectangle-zone drawing */
@@ -104,6 +152,12 @@ interface StoreState {
    */
   moveBackground: (deltaX: number, deltaY: number) => void;
   setToolMode: (mode: ToolMode) => void;
+  /**
+   * Switch between the heating and ventilation workspaces. Resets tool state and
+   * selection the same way `setToolMode` resets drawing state, so nothing left over from
+   * one workspace (an in-progress route, a selected zone) bleeds into the other.
+   */
+  setDesignMode: (mode: DesignMode) => void;
   /** Add a new manifold near existing content (or the origin, if the drawing is empty). */
   addManifold: () => void;
   /** Remove a manifold and clear routing for every zone that was connected to it. */
@@ -124,10 +178,13 @@ interface StoreState {
   selectZone: (id: string | null) => void;
   updateZoneSpacing: (id: string, spacingMm: number) => void;
   updateZonePadding: (id: string, paddingMm: number) => void;
+  updateZoneFlowLpmPer100m: (id: string, lpm: number) => void;
   updateZoneConnectionCorner: (id: string, corner: ZoneConnectionCorner) => void;
   updateZoneStartDirection: (id: string, direction: SpiralStartDirection) => void;
   updateZoneName: (id: string, name: string) => void;
   updateZoneVertex: (zoneId: string, vertexIdx: number, pt: Point) => void;
+  /** Insert a new vertex right after `afterIndex` — double-clicking an edge while editing a boundary. */
+  insertZoneVertex: (zoneId: string, afterIndex: number, pt: Point) => void;
   /** Begin (or restart) manual leader routing for a zone. */
   startRouteZone: (zoneId: string) => void;
   /**
@@ -135,6 +192,11 @@ interface StoreState {
    * assigns the zone to that manifold — if the click lands on any manifold.
    */
   addRoutePoint: (pt: Point) => void;
+  /**
+   * Finish the in-progress route at the last drawn point, without connecting to a manifold —
+   * the pipe simply ends there. No-op if nothing has been drawn yet.
+   */
+  finishRoutingAtPoint: () => void;
   /** Abandon the in-progress route without saving it. */
   cancelRouting: () => void;
   /** Drag a single waypoint of an already-drawn leader path; adjacent bends are repaired to stay orthogonal. */
@@ -167,6 +229,21 @@ interface StoreState {
    */
   slideZoneManifoldPort: (zoneId: string, pt: Point) => void;
   /**
+   * Drag one corner of a zone's spiral to an arbitrary point, sliding its two adjoining
+   * lanes to follow — offsetting the fill from its auto-generated shape. `commit` mirrors
+   * the leader editors' `reflow` flag: pass false on every live drag tick and true on
+   * release, when the leader run into this zone (if any) should be repaired or, if the
+   * connection point moved too far, dropped.
+   */
+  updateSpiralCorner: (
+    zoneId: string,
+    corner: SpiralCorner,
+    value: Point,
+    commit: boolean,
+  ) => void;
+  /** Discard a zone's manually-edited spiral, reverting to the auto-generated fill. */
+  resetSpiralOverride: (zoneId: string) => void;
+  /**
    * Resize the imported floor plan by `factor`, holding `anchor` still — what calibration
    * does once it learns the plan came in at the wrong size. Nothing else in the drawing
    * moves: zones and the manifold are authored in real millimetres and are already right.
@@ -176,7 +253,7 @@ interface StoreState {
   setDefaultSpacing: (mm: number) => void;
   setSupplyTempC: (celsius: number) => void;
   setReturnTempC: (celsius: number) => void;
-  setFlowLpmPer100m: (lpm: number) => void;
+  setDefaultFlowLpmPer100m: (lpm: number) => void;
   setPipeOuterDiameter: (mm: number) => void;
   /**
    * Place a tape-measure end. The first click starts a reading, the second completes it,
@@ -192,6 +269,64 @@ interface StoreState {
   /** Frame the whole drawing in a viewport of the given screen size. */
   fitViewToContent: (viewportWidth: number, viewportHeight: number) => void;
   recomputeZoneSpiral: (zoneId: string) => void;
+
+  setTotalVentAirflowM3h: (m3h: number) => void;
+  setDuctDiameterMm: (mm: number) => void;
+
+  /** Add a new distribution box near existing content (or the origin, if the drawing is empty). */
+  addDistributionBox: () => void;
+  /** Remove a distribution box and clear routing for every deflector that was connected to it. */
+  deleteDistributionBox: (id: string) => void;
+  selectDistributionBox: (id: string | null) => void;
+  updateDistributionBoxName: (id: string, name: string) => void;
+  updateDistributionBoxPosition: (id: string, pos: Point) => void;
+  setDistributionBoxRotation: (id: string, rotationDeg: number) => void;
+
+  /** Place a new deflector at a clicked point. Stays in the placing tool afterward, so several can be dropped in a row. */
+  placeDeflectorAt: (pt: Point, ductType: VentDuctType) => void;
+  deleteDeflector: (id: string) => void;
+  selectDeflector: (id: string | null) => void;
+  updateDeflectorName: (id: string, name: string) => void;
+  updateDeflectorAirflowM3h: (id: string, m3h: number) => void;
+  updateDeflectorDuctType: (id: string, ductType: VentDuctType) => void;
+  /** Move the airflow label to a different side of the deflector dot, to dodge nearby ducts or other labels. */
+  updateDeflectorAirflowLabelPosition: (id: string, position: AirflowLabelPosition) => void;
+  /** Drag a deflector to a new position — it's its own duct anchor, so this just moves the anchor and recomputes length. */
+  updateDeflectorPosition: (id: string, pt: Point) => void;
+
+  /** Begin (or restart) manual duct routing for a deflector. */
+  startRouteDuct: (deflectorId: string) => void;
+  /**
+   * Add a click to the in-progress duct path; finishes routing automatically — and
+   * assigns the deflector to that box — if the click lands on any distribution box.
+   */
+  addDuctRoutePoint: (pt: Point) => void;
+  /** Finish the in-progress duct at the last drawn point, without connecting to a box. */
+  finishDuctRoutingAtPoint: () => void;
+  /** Abandon the in-progress duct route without saving it. */
+  cancelDuctRouting: () => void;
+  /** Drag a single waypoint of an already-drawn duct; adjacent bends are repaired to stay orthogonal. */
+  updateDuctWaypoint: (deflectorId: string, waypointIndex: number, pt: Point, reflow: boolean) => void;
+  /** Slide a purely horizontal/vertical duct segment by moving its two endpoint waypoints together along the perpendicular axis. */
+  updateDuctSegment: (
+    deflectorId: string,
+    waypointIndexA: number,
+    waypointIndexB: number,
+    axis: 'x' | 'y',
+    value: number,
+    reflow: boolean,
+  ) => void;
+
+  /** Finish drawing a vent zone's room outline from the clicked points — the ventilation counterpart of `closeZone`. */
+  closeVentZone: () => void;
+  /** Finish drawing a vent zone's room outline as a rectangle — the ventilation counterpart of `finishDrawRect`. */
+  finishDrawVentRect: (pt: Point) => void;
+  deleteVentZone: (id: string) => void;
+  selectVentZone: (id: string | null) => void;
+  updateVentZoneName: (id: string, name: string) => void;
+  updateVentZoneVertex: (zoneId: string, vertexIdx: number, pt: Point) => void;
+  /** Insert a new vertex right after `afterIndex` — double-clicking an edge while editing a boundary. */
+  insertVentZoneVertex: (zoneId: string, afterIndex: number, pt: Point) => void;
 }
 
 export type PersistedZone = Pick<
@@ -202,11 +337,25 @@ export type PersistedZone = Pick<
   | 'polygon'
   | 'spacingMm'
   | 'paddingMm'
+  | 'flowLpmPer100m'
   | 'connectionCorner'
   | 'startDirection'
+  | 'spiralOverride'
   | 'leaderWaypoints'
   | 'manifoldPortOffsetMm'
   | 'manifoldId'
+>;
+
+export type PersistedDeflector = Pick<
+  VentDeflector,
+  | 'id'
+  | 'name'
+  | 'position'
+  | 'ductType'
+  | 'airflowM3h'
+  | 'airflowLabelPosition'
+  | 'distributionBoxId'
+  | 'ductWaypoints'
 >;
 
 export interface PersistedStoreState {
@@ -216,22 +365,37 @@ export interface PersistedStoreState {
   defaultSpacingMm: number;
   supplyTempC: number;
   returnTempC: number;
-  flowLpmPer100m: number;
+  defaultFlowLpmPer100m: number;
   pipeOuterDiameterMm: number;
   background: Background | null;
   zones: PersistedZone[];
   manifolds: Manifold[];
+  totalVentAirflowM3h: number;
+  ductDiameterMm: number;
+  distributionBoxes: VentDistributionBox[];
+  deflectors: PersistedDeflector[];
+  ventZones: VentZone[];
 }
 
 export const UFH_STORE_STORAGE_KEY = 'ufh-designer-store';
 
 let zoneCounter = 1;
 let manifoldCounter = 1;
+let distributionBoxCounter = 1;
+let deflectorCounter = 1;
+let ventZoneCounter = 1;
 
 function createTransientState(): Pick<
   StoreState,
   | 'selectedZoneId'
   | 'selectedManifoldId'
+  | 'designMode'
+  | 'selectedDistributionBoxId'
+  | 'selectedDeflectorId'
+  | 'deflectorFocusNonce'
+  | 'selectedVentZoneId'
+  | 'ventZoneFocusNonce'
+  | 'ductRouting'
   | 'toolMode'
   | 'drawingPoints'
   | 'drawRectStart'
@@ -242,6 +406,13 @@ function createTransientState(): Pick<
   return {
     selectedZoneId: null,
     selectedManifoldId: null,
+    designMode: 'heating',
+    selectedDistributionBoxId: null,
+    selectedDeflectorId: null,
+    deflectorFocusNonce: 0,
+    selectedVentZoneId: null,
+    ventZoneFocusNonce: 0,
+    ductRouting: null,
     toolMode: 'select',
     drawingPoints: [],
     drawRectStart: null,
@@ -263,24 +434,66 @@ function recomputeZones(
 ): Zone[] {
   const withSpirals = zones.map((zone) => {
     const manifold = manifolds.find((candidate) => candidate.id === zone.manifoldId) ?? null;
-    return recomputeSpiral(zone, manifold, { preserveLeaderRouting: true });
+    return recomputeSpiral(zone, manifold, { preserveLeaderRouting: true, preserveSpiralOverride: true });
   });
 
   return withSpirals.map((zone) => {
     if (!zone.leaderWaypoints) return zone;
-    const manifold = manifolds.find((candidate) => candidate.id === zone.manifoldId) ?? null;
     const stubs = zone.spiral ? getSpiralStubs(zone.spiral) : null;
-    const pair = manifold ? getZoneManifoldPorts(manifold, zone) : null;
-    if (!stubs || !pair) return { ...zone, leaderLengthMm: 0 };
+    if (!stubs) return { ...zone, leaderLengthMm: 0 };
+    const anchor = midpoint(stubs.start, stubs.end);
 
-    const fullPath = assembleLeaderPath(
-      midpoint(stubs.start, stubs.end),
-      zone.leaderWaypoints,
-      midpoint(pair.supplyPort, pair.returnPort),
-    );
+    // Finished without a manifold (see `finishRoutingAtPoint`): the path just ends at the
+    // last drawn waypoint, with no approach to derive.
+    if (!zone.manifoldId) {
+      return { ...zone, leaderLengthMm: openLeaderLengthMm(anchor, zone.leaderWaypoints) };
+    }
+
+    const manifold = manifolds.find((candidate) => candidate.id === zone.manifoldId) ?? null;
+    const pair = manifold ? getZoneManifoldPorts(manifold, zone) : null;
+    if (!pair) return { ...zone, leaderLengthMm: 0 };
+
+    const fullPath = assembleLeaderPath(anchor, zone.leaderWaypoints, midpoint(pair.supplyPort, pair.returnPort));
     // One drawn path represents the supply+return pair, so it accounts for two pipe runs.
     return { ...zone, leaderLengthMm: pathLengthMm(fullPath) * 2 };
   });
+}
+
+/**
+ * A single deflector's duct length: a single run, never doubled like a heating leader's
+ * supply+return pair. Zero when nothing's routed yet, or when the deflector's
+ * distribution box has been deleted out from under it. Built on the same
+ * `buildDeflectorDuctPaths` the canvas renders from, so the stored length always
+ * matches what's drawn.
+ */
+function computeDuctLengthMm(deflector: VentDeflector, distributionBoxes: VentDistributionBox[]): number {
+  const [result] = buildDeflectorDuctPaths([deflector], distributionBoxes);
+  return result ? pathLengthMm(result.path) : 0;
+}
+
+/** Recompute every deflector's derived `ductLengthMm` against the current box layout. */
+function recomputeDeflectors(
+  deflectors: VentDeflector[],
+  distributionBoxes: VentDistributionBox[],
+): VentDeflector[] {
+  const lengthById = new Map(
+    buildDeflectorDuctPaths(deflectors, distributionBoxes).map((result) => [
+      result.deflectorId,
+      pathLengthMm(result.path),
+    ]),
+  );
+  return deflectors.map((deflector) => ({
+    ...deflector,
+    ductLengthMm: lengthById.get(deflector.id) ?? 0,
+  }));
+}
+
+/** Clear a deflector's manual duct routing (and chosen box) — used whenever the box it was connected to is deleted. */
+function clearDeflectorDuctRouting(deflector: VentDeflector): VentDeflector {
+  if (deflector.ductWaypoints === null && deflector.distributionBoxId === null && deflector.ductLengthMm === 0) {
+    return deflector;
+  }
+  return { ...deflector, ductWaypoints: null, distributionBoxId: null, ductLengthMm: 0 };
 }
 
 /**
@@ -312,16 +525,38 @@ function scaleBackgroundAbout(background: Background, factor: number, anchor: Po
 }
 
 /**
+ * A point-like entity (manifold, distribution box, deflector) has no polygon to
+ * contribute its own extent, so on its own it would collapse the bounds to a single
+ * point — and framing a zero-size box zooms in close to infinitely. Padding it out to a
+ * small square keeps `fitViewToContent` sane even when it's the only thing in the
+ * drawing, which a fresh ventilation-only (or manifold-only) project often is.
+ */
+const POINT_ENTITY_BOUNDS_PADDING_MM = 1000;
+
+function pushPointEntityBounds(points: Point[], position: Point): void {
+  points.push(
+    { x: position.x - POINT_ENTITY_BOUNDS_PADDING_MM, y: position.y - POINT_ENTITY_BOUNDS_PADDING_MM },
+    { x: position.x + POINT_ENTITY_BOUNDS_PADDING_MM, y: position.y + POINT_ENTITY_BOUNDS_PADDING_MM },
+  );
+}
+
+/**
  * Extent of everything drawn, in mm — zones, the manifold and the imported plan — for
  * framing the view. Null when the drawing is empty and there's nothing to frame.
  */
 function getDrawingBoundsMm(
-  state: Pick<StoreState, 'zones' | 'manifolds' | 'background'>,
+  state: Pick<
+    StoreState,
+    'zones' | 'manifolds' | 'background' | 'distributionBoxes' | 'deflectors' | 'ventZones'
+  >,
 ): { minX: number; minY: number; maxX: number; maxY: number } | null {
   const points: Point[] = [];
 
   for (const zone of state.zones) points.push(...zone.polygon.points);
-  for (const manifold of state.manifolds) points.push(manifold.position);
+  for (const manifold of state.manifolds) pushPointEntityBounds(points, manifold.position);
+  for (const box of state.distributionBoxes) pushPointEntityBounds(points, box.position);
+  for (const deflector of state.deflectors) pushPointEntityBounds(points, deflector.position);
+  for (const ventZone of state.ventZones) points.push(...ventZone.polygon.points);
 
   const { background } = state;
   if (background?.kind === 'image') {
@@ -409,6 +644,23 @@ function withLeaderWaypoints(
   };
 }
 
+/**
+ * Commit a new set of waypoints onto a zone whose leader was finished without a manifold
+ * (see `finishRoutingAtPoint`) — the manifold-less counterpart to `withLeaderWaypoints`.
+ * There's no target to assemble an approach toward, so the path is just the anchor followed
+ * by the (optionally reflowed) waypoints.
+ *
+ * Returns null when the zone has no spiral to anchor against.
+ */
+function withOpenLeaderWaypoints(zone: Zone, waypoints: Point[], reflow: boolean): Zone | null {
+  const stubs = zone.spiral ? getSpiralStubs(zone.spiral) : null;
+  if (!stubs) return null;
+  const anchor = midpoint(stubs.start, stubs.end);
+
+  const repaired = reflow ? reflowLeaderWaypoints(anchor, waypoints) : waypoints;
+  return { ...zone, leaderWaypoints: repaired, leaderLengthMm: openLeaderLengthMm(anchor, repaired) };
+}
+
 function getZoneBounds(zone: Zone) {
   const xs = zone.polygon.points.map((point) => point.x);
   const ys = zone.polygon.points.map((point) => point.y);
@@ -487,6 +739,19 @@ function getZonePaddingMm(zone: Partial<Pick<Zone, 'paddingMm'>>): number {
   return Math.max(0, zone.paddingMm ?? DEFAULT_ZONE_PADDING_MM);
 }
 
+/**
+ * `fallback` carries forward a pre-per-zone-flow-rate save's single global rate, so upgrading
+ * an old project keeps every zone's flow exactly as it was rather than snapping to the
+ * hard-coded default.
+ */
+function getZoneFlowLpmPer100m(zone: Partial<Pick<Zone, 'flowLpmPer100m'>>, fallback: number): number {
+  if (!Number.isFinite(zone.flowLpmPer100m) || (zone.flowLpmPer100m as number) <= 0) {
+    return fallback;
+  }
+
+  return zone.flowLpmPer100m as number;
+}
+
 function getZoneConnectionCorner(
   zone: Partial<Pick<Zone, 'connectionCorner'>>,
 ): ZoneConnectionCorner {
@@ -521,31 +786,79 @@ function toPersistedZone(zone: Zone): PersistedZone {
     polygon: zone.polygon,
     spacingMm: zone.spacingMm,
     paddingMm: zone.paddingMm,
+    flowLpmPer100m: zone.flowLpmPer100m,
     connectionCorner: zone.connectionCorner,
     startDirection: zone.startDirection,
+    spiralOverride: zone.spiralOverride,
     leaderWaypoints: zone.leaderWaypoints,
     manifoldPortOffsetMm: zone.manifoldPortOffsetMm,
     manifoldId: zone.manifoldId,
   };
 }
 
-function hydrateZone(zone: Partial<PersistedZone> & Pick<Zone, 'id' | 'name' | 'color' | 'polygon' | 'spacingMm'>): Zone {
+function hydrateZone(
+  zone: Partial<PersistedZone> & Pick<Zone, 'id' | 'name' | 'color' | 'polygon' | 'spacingMm'>,
+  legacyFlowLpmPer100m: number,
+): Zone {
   return {
     id: zone.id,
     name: zone.name,
     color: zone.color,
     polygon: zone.polygon,
     paddingMm: getZonePaddingMm(zone),
+    flowLpmPer100m: getZoneFlowLpmPer100m(zone, legacyFlowLpmPer100m),
     connectionCorner: getZoneConnectionCorner(zone),
     startDirection: getZoneStartDirection(zone),
     spacingMm: zone.spacingMm,
     spiral: null,
+    spiralOverride: Array.isArray(zone.spiralOverride) ? zone.spiralOverride : null,
     spiralLengthMm: 0,
     leaderLengthMm: 0,
     areaMm2: 0,
     leaderWaypoints: Array.isArray(zone.leaderWaypoints) ? zone.leaderWaypoints : null,
     manifoldPortOffsetMm: Number.isFinite(zone.manifoldPortOffsetMm) ? (zone.manifoldPortOffsetMm as number) : null,
     manifoldId: typeof zone.manifoldId === 'string' ? zone.manifoldId : null,
+  };
+}
+
+function toPersistedDeflector(deflector: VentDeflector): PersistedDeflector {
+  return {
+    id: deflector.id,
+    name: deflector.name,
+    position: deflector.position,
+    ductType: deflector.ductType,
+    airflowM3h: deflector.airflowM3h,
+    airflowLabelPosition: deflector.airflowLabelPosition,
+    distributionBoxId: deflector.distributionBoxId,
+    ductWaypoints: deflector.ductWaypoints,
+  };
+}
+
+const AIRFLOW_LABEL_POSITIONS: AirflowLabelPosition[] = ['top', 'bottom', 'left', 'right'];
+const DEFAULT_AIRFLOW_LABEL_POSITION: AirflowLabelPosition = 'right';
+
+function getAirflowLabelPosition(value: unknown): AirflowLabelPosition {
+  return AIRFLOW_LABEL_POSITIONS.includes(value as AirflowLabelPosition)
+    ? (value as AirflowLabelPosition)
+    : DEFAULT_AIRFLOW_LABEL_POSITION;
+}
+
+function hydrateDeflector(
+  deflector: Partial<PersistedDeflector> & Pick<VentDeflector, 'id' | 'name' | 'position'>,
+): VentDeflector {
+  return {
+    id: deflector.id,
+    name: deflector.name,
+    position: deflector.position,
+    ductType: deflector.ductType === 'extract' ? 'extract' : 'supply',
+    airflowM3h:
+      Number.isFinite(deflector.airflowM3h) && (deflector.airflowM3h as number) > 0
+        ? (deflector.airflowM3h as number)
+        : DEFAULT_DEFLECTOR_AIRFLOW_M3H,
+    airflowLabelPosition: getAirflowLabelPosition(deflector.airflowLabelPosition),
+    distributionBoxId: typeof deflector.distributionBoxId === 'string' ? deflector.distributionBoxId : null,
+    ductWaypoints: Array.isArray(deflector.ductWaypoints) ? deflector.ductWaypoints : null,
+    ductLengthMm: 0,
   };
 }
 
@@ -567,6 +880,24 @@ function getNextManifoldCounter(manifolds: Manifold[]): number {
   return Math.max(manifolds.length + 1, highestAutoManifoldNumber + 1, 1);
 }
 
+function getNextDistributionBoxCounter(boxes: VentDistributionBox[]): number {
+  const highestAutoBoxNumber = boxes.reduce((highest, box) => {
+    const match = box.name.match(/^Distribution Box (\d+)$/);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+
+  return Math.max(boxes.length + 1, highestAutoBoxNumber + 1, 1);
+}
+
+function getNextDeflectorCounter(deflectors: VentDeflector[]): number {
+  const highestAutoDeflectorNumber = deflectors.reduce((highest, deflector) => {
+    const match = deflector.name.match(/^Deflector (\d+)$/);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+
+  return Math.max(deflectors.length + 1, highestAutoDeflectorNumber + 1, 1);
+}
+
 function normalizeRotation(rotationDeg: number): number {
   const wrapped = rotationDeg % 360;
   return wrapped < 0 ? wrapped + 360 : wrapped;
@@ -585,26 +916,81 @@ function hydrateManifold(manifold: Partial<Manifold> & { position: Point }, inde
   };
 }
 
+/** Normalize a persisted distribution box — the ventilation counterpart of `hydrateManifold`. */
+function hydrateDistributionBox(
+  box: Partial<VentDistributionBox> & { position: Point },
+  index: number,
+): VentDistributionBox {
+  return {
+    id: typeof box.id === 'string' ? box.id : `distribution-box-${index + 1}`,
+    name: typeof box.name === 'string' ? box.name : `Distribution Box ${index + 1}`,
+    position: box.position,
+    rotationDeg: normalizeRotation(box.rotationDeg ?? 0),
+  };
+}
+
+function getNextVentZoneCounter(ventZones: VentZone[]): number {
+  const highestAutoVentZoneNumber = ventZones.reduce((highest, zone) => {
+    const match = zone.name.match(/^Zone (\d+)$/);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+
+  return Math.max(ventZones.length + 1, highestAutoVentZoneNumber + 1, 1);
+}
+
+/** Normalize a persisted vent zone — has no derived fields, so there's nothing to recompute, only ids/names to fill in. */
+function hydrateVentZone(zone: Partial<VentZone> & { polygon: Polygon }, index: number): VentZone {
+  return {
+    id: typeof zone.id === 'string' ? zone.id : `vent-zone-${index + 1}`,
+    name: typeof zone.name === 'string' ? zone.name : `Zone ${index + 1}`,
+    color: typeof zone.color === 'string' ? zone.color : ZONE_COLORS[index % ZONE_COLORS.length],
+    polygon: zone.polygon,
+  };
+}
+
 /**
  * Recompute a zone's spiral. Leader routing is manual, so any geometry change
  * that could move the spiral's stubs invalidates the previously-drawn leader
  * paths — unless `preserveLeaderRouting` is set (used only when hydrating
  * from storage, where the saved routes should survive a reload).
+ *
+ * A manually-edited `spiralOverride` is dropped by default — any call here means
+ * something the fill actually depends on has changed, so the hand-edit no longer
+ * applies and the fill is regenerated from scratch. `preserveSpiralOverride` is set
+ * only when hydrating from storage or re-anchoring after something unrelated moved
+ * (the manifold), where the saved edit should survive untouched.
  */
 function recomputeSpiral(
   zone: Zone,
   manifold: Manifold | null,
-  options: { preserveLeaderRouting?: boolean } = {},
+  options: { preserveLeaderRouting?: boolean; preserveSpiralOverride?: boolean } = {},
 ): Zone {
+  const areaMm2 = polygonArea(zone.polygon.points);
+
+  if (options.preserveSpiralOverride && zone.spiralOverride) {
+    const spiral = zone.spiralOverride;
+    const spiralLengthMm = pathLengthMm(spiral);
+    return options.preserveLeaderRouting
+      ? { ...zone, spiral, spiralLengthMm, areaMm2 }
+      : {
+          ...zone,
+          spiral,
+          spiralLengthMm,
+          areaMm2,
+          leaderWaypoints: null,
+          manifoldPortOffsetMm: null,
+          leaderLengthMm: 0,
+        };
+  }
+
   // Spacing and padding are authored in mm and the drawing is in mm, so they go straight
   // in — no conversion, which is the point of keeping one unit throughout.
   const { hint, mirror } = getZoneConnection(zone, manifold);
   const spiral = generateSerpentine(zone.polygon, zone.spacingMm, hint, zone.paddingMm, mirror);
   const spiralLengthMm = pathLengthMm(spiral);
-  const areaMm2 = polygonArea(zone.polygon.points);
 
   if (options.preserveLeaderRouting) {
-    return { ...zone, spiral, spiralLengthMm, areaMm2 };
+    return { ...zone, spiral, spiralLengthMm, areaMm2, spiralOverride: null };
   }
 
   return {
@@ -612,10 +998,59 @@ function recomputeSpiral(
     spiral,
     spiralLengthMm,
     areaMm2,
+    spiralOverride: null,
     leaderWaypoints: null,
     manifoldPortOffsetMm: null,
     leaderLengthMm: 0,
   };
+}
+
+/**
+ * Apply an edited polygon (a vertex moved, or a new one inserted) to a zone: regenerate
+ * the spiral fill, then decide whether the existing leader routing still makes sense —
+ * kept and repaired if the spiral's connection stubs barely moved, dropped otherwise.
+ * Shared by `updateZoneVertex` and `insertZoneVertex`, which differ only in how they
+ * compute the new `points` array.
+ */
+function applyZonePolygonPoints(zone: Zone, manifold: Manifold | null, points: Point[]): Zone {
+  const previousStubs = zone.spiral ? getSpiralStubs(zone.spiral) : null;
+  const recomputed = recomputeSpiral({ ...zone, polygon: { points } }, manifold, {
+    preserveLeaderRouting: true,
+  });
+
+  if (!zone.leaderWaypoints || !previousStubs || !recomputed.spiral) {
+    // Nothing routed yet, or no spiral to compare against — nothing to preserve.
+    return {
+      ...recomputed,
+      leaderWaypoints: null,
+      manifoldPortOffsetMm: null,
+      manifoldId: null,
+      leaderLengthMm: 0,
+    };
+  }
+
+  const newStubs = getSpiralStubs(recomputed.spiral);
+  const anchorShiftMm = newStubs
+    ? distanceMm(midpoint(previousStubs.start, previousStubs.end), midpoint(newStubs.start, newStubs.end))
+    : Infinity;
+
+  if (anchorShiftMm > ZONE_RESIZE_ROUTING_TOLERANCE_MM) {
+    // The connection point moved enough that the old routing no longer makes sense.
+    return {
+      ...recomputed,
+      leaderWaypoints: null,
+      manifoldPortOffsetMm: null,
+      manifoldId: null,
+      leaderLengthMm: 0,
+    };
+  }
+
+  // Barely moved — keep the routing, just repair the first segment against the new anchor.
+  // A leader finished without a manifold (see `finishRoutingAtPoint`) has no target to
+  // repair against, so it's reflowed against its own anchor instead.
+  return manifold
+    ? withLeaderWaypoints(recomputed, manifold, zone.leaderWaypoints, true) ?? recomputed
+    : withOpenLeaderWaypoints(recomputed, zone.leaderWaypoints, true) ?? recomputed;
 }
 
 /** Build a rectangular polygon from two opposite corners */
@@ -634,9 +1069,12 @@ function rectPolygon(a: Point, b: Point) {
 /**
  * Version 1 stored every coordinate in screen pixels, with a `pixelsPerMeter` factor
  * recording what those pixels meant. Version 2 moved to millimetres outright. Version 3
- * replaced the single `manifold` field with a `manifolds` array.
+ * replaced the single `manifold` field with a `manifolds` array. Version 4 added the
+ * ventilation system (`distributionBoxes`, `deflectors`, `totalVentAirflowM3h`). Version 5
+ * added `ventZones`. Both were purely additive, so no migration function is needed, just
+ * defaults for files that predate them.
  */
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 5;
 
 /** Fields present only in files saved before the current schema. */
 interface LegacyPixelState {
@@ -645,6 +1083,8 @@ interface LegacyPixelState {
   background?: Record<string, unknown> | null;
   /** Pre-v3 single-manifold field, folded into `manifolds` by `migrateToMultiManifold`. */
   manifold?: { position: Point; rotationDeg?: number } | null;
+  /** Pre-per-zone-flow-rate global field, folded onto each zone by `hydrateZone`. */
+  flowLpmPer100m?: number;
 }
 
 function scalePoint(point: Point, factor: number): Point {
@@ -771,11 +1211,16 @@ export function partializeStoreState(state: StoreState): PersistedStoreState {
     defaultSpacingMm: state.defaultSpacingMm,
     supplyTempC: state.supplyTempC,
     returnTempC: state.returnTempC,
-    flowLpmPer100m: state.flowLpmPer100m,
+    defaultFlowLpmPer100m: state.defaultFlowLpmPer100m,
     pipeOuterDiameterMm: state.pipeOuterDiameterMm,
     background: state.background,
     zones: state.zones.map(toPersistedZone),
     manifolds: state.manifolds,
+    totalVentAirflowM3h: state.totalVentAirflowM3h,
+    ductDiameterMm: state.ductDiameterMm,
+    distributionBoxes: state.distributionBoxes,
+    deflectors: state.deflectors.map(toPersistedDeflector),
+    ventZones: state.ventZones,
   };
 }
 
@@ -789,14 +1234,30 @@ export function mergePersistedStoreState(
       : {},
   );
   const persisted = migrateToMultiManifold(millimetres);
+  const legacyFlowLpmPer100m =
+    typeof millimetres.flowLpmPer100m === 'number' && millimetres.flowLpmPer100m > 0
+      ? millimetres.flowLpmPer100m
+      : DEFAULT_ZONE_FLOW_LPM_PER_100M;
   const hydratedZones = Array.isArray(persisted.zones)
     ? persisted.zones.map((zone) =>
-        hydrateZone(zone as Partial<PersistedZone> & Pick<Zone, 'id' | 'name' | 'color' | 'polygon' | 'spacingMm'>),
+        hydrateZone(
+          zone as Partial<PersistedZone> & Pick<Zone, 'id' | 'name' | 'color' | 'polygon' | 'spacingMm'>,
+          legacyFlowLpmPer100m,
+        ),
       )
     : currentState.zones;
   const hydratedManifolds = Array.isArray(persisted.manifolds)
     ? persisted.manifolds.map((manifold, index) => hydrateManifold(manifold, index))
     : currentState.manifolds;
+  const hydratedDistributionBoxes = Array.isArray(persisted.distributionBoxes)
+    ? persisted.distributionBoxes.map((box, index) => hydrateDistributionBox(box, index))
+    : currentState.distributionBoxes;
+  const hydratedDeflectors = Array.isArray(persisted.deflectors)
+    ? persisted.deflectors.map((deflector) => hydrateDeflector(deflector))
+    : currentState.deflectors;
+  const hydratedVentZones = Array.isArray(persisted.ventZones)
+    ? persisted.ventZones.map((zone, index) => hydrateVentZone(zone, index))
+    : currentState.ventZones;
   const merged = {
     ...currentState,
     ...persisted,
@@ -805,17 +1266,35 @@ export function mergePersistedStoreState(
       typeof persisted.pipeOuterDiameterMm === 'number' && persisted.pipeOuterDiameterMm > 0
         ? persisted.pipeOuterDiameterMm
         : DEFAULT_PIPE_OUTER_DIAMETER_MM,
+    // Drawings saved before ventilation existed predate this setting entirely.
+    totalVentAirflowM3h:
+      typeof persisted.totalVentAirflowM3h === 'number' && persisted.totalVentAirflowM3h >= 0
+        ? persisted.totalVentAirflowM3h
+        : DEFAULT_TOTAL_VENT_AIRFLOW_M3H,
+    // Drawings saved before duct diameter was a setting predate DN90, so they get DN90.
+    ductDiameterMm:
+      typeof persisted.ductDiameterMm === 'number' && persisted.ductDiameterMm > 0
+        ? persisted.ductDiameterMm
+        : DEFAULT_DUCT_DIAMETER_MM,
     manifolds: hydratedManifolds,
     zones: hydratedZones,
+    distributionBoxes: hydratedDistributionBoxes,
+    deflectors: hydratedDeflectors,
+    ventZones: hydratedVentZones,
   };
   const zones = recomputeZones(merged.zones, merged.manifolds);
+  const deflectors = recomputeDeflectors(merged.deflectors, merged.distributionBoxes);
 
   zoneCounter = getNextZoneCounter(zones);
   manifoldCounter = getNextManifoldCounter(hydratedManifolds);
+  distributionBoxCounter = getNextDistributionBoxCounter(hydratedDistributionBoxes);
+  deflectorCounter = getNextDeflectorCounter(deflectors);
+  ventZoneCounter = getNextVentZoneCounter(hydratedVentZones);
 
   return {
     ...merged,
     zones,
+    deflectors,
     ...createTransientState(),
   };
 }
@@ -858,11 +1337,16 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
   defaultSpacingMm: 150,
   supplyTempC: 40,
   returnTempC: 35,
-  flowLpmPer100m: 2,
+  defaultFlowLpmPer100m: DEFAULT_ZONE_FLOW_LPM_PER_100M,
   pipeOuterDiameterMm: DEFAULT_PIPE_OUTER_DIAMETER_MM,
   background: null,
   zones: [],
   manifolds: [],
+  totalVentAirflowM3h: DEFAULT_TOTAL_VENT_AIRFLOW_M3H,
+  ductDiameterMm: DEFAULT_DUCT_DIAMETER_MM,
+  distributionBoxes: [],
+  deflectors: [],
+  ventZones: [],
   stageX: 0,
   stageY: 0,
   ...createTransientState(),
@@ -889,11 +1373,27 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
     });
   },
 
-  setToolMode: (mode) => set({ toolMode: mode, drawingPoints: [], drawRectStart: null, routing: null }),
+  setToolMode: (mode) =>
+    set({ toolMode: mode, drawingPoints: [], drawRectStart: null, routing: null, ductRouting: null }),
+
+  setDesignMode: (mode) =>
+    set({
+      designMode: mode,
+      toolMode: 'select',
+      drawingPoints: [],
+      drawRectStart: null,
+      routing: null,
+      ductRouting: null,
+      selectedZoneId: null,
+      selectedManifoldId: null,
+      selectedDistributionBoxId: null,
+      selectedDeflectorId: null,
+      selectedVentZoneId: null,
+    }),
 
   addManifold: () => {
-    const { manifolds, zones, background } = get();
-    const bounds = getDrawingBoundsMm({ zones, manifolds, background });
+    const { manifolds, zones, background, distributionBoxes, deflectors, ventZones } = get();
+    const bounds = getDrawingBoundsMm({ zones, manifolds, background, distributionBoxes, deflectors, ventZones });
     // Offset to the right of whatever's already there (manifolds included), so repeated
     // adds naturally spread out with daylight between them instead of touching edge-to-edge
     // (a manifold's own body is at least 800mm wide) or stacking on top of each other.
@@ -943,10 +1443,250 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
     set({ manifolds: nextManifolds, routing: null, zones: recomputeZones(zones, nextManifolds) });
   },
 
+  setTotalVentAirflowM3h: (m3h) => set({ totalVentAirflowM3h: Math.max(0, m3h) }),
+
+  setDuctDiameterMm: (mm) => set({ ductDiameterMm: mm }),
+
+  addDistributionBox: () => {
+    const { distributionBoxes } = get();
+    const bounds = getDrawingBoundsMm(get());
+    // Same placement rule as `addManifold`: offset to the right of whatever's already
+    // there, so repeated adds spread out instead of stacking on top of each other.
+    const position = bounds ? { x: bounds.maxX + 1500, y: (bounds.minY + bounds.maxY) / 2 } : { x: 0, y: 0 };
+    // The counter (also used for the display name) guarantees a unique id even when two
+    // boxes are added within the same millisecond, which a bare `Date.now()` can't.
+    const id = `distribution-box-${Date.now()}-${distributionBoxCounter}`;
+    const box: VentDistributionBox = {
+      id,
+      name: `Distribution Box ${distributionBoxCounter++}`,
+      position,
+      rotationDeg: 0,
+    };
+    set({ distributionBoxes: [...distributionBoxes, box], selectedDistributionBoxId: id, selectedDeflectorId: null });
+  },
+
+  deleteDistributionBox: (id) => {
+    const { distributionBoxes, deflectors, selectedDistributionBoxId } = get();
+    const nextDeflectors = deflectors.map((deflector) =>
+      deflector.distributionBoxId === id ? clearDeflectorDuctRouting(deflector) : deflector,
+    );
+    set({
+      distributionBoxes: distributionBoxes.filter((box) => box.id !== id),
+      deflectors: nextDeflectors,
+      selectedDistributionBoxId: selectedDistributionBoxId === id ? null : selectedDistributionBoxId,
+    });
+  },
+
+  selectDistributionBox: (id) =>
+    set({
+      selectedDistributionBoxId: id,
+      ...(id ? { selectedDeflectorId: null, selectedVentZoneId: null } : {}),
+    }),
+
+  updateDistributionBoxName: (id, name) =>
+    set((state) => ({
+      distributionBoxes: state.distributionBoxes.map((box) => (box.id === id ? { ...box, name } : box)),
+    })),
+
+  updateDistributionBoxPosition: (id, pos) => {
+    const { distributionBoxes, deflectors } = get();
+    // Ducts follow the box the same way leaders follow a moved manifold: the attach
+    // point is derived from the box's current position, so only the lengths need redoing.
+    const nextBoxes = distributionBoxes.map((box) => (box.id === id ? { ...box, position: pos } : box));
+    set({ distributionBoxes: nextBoxes, ductRouting: null, deflectors: recomputeDeflectors(deflectors, nextBoxes) });
+  },
+
+  setDistributionBoxRotation: (id, rotationDeg) => {
+    const { distributionBoxes, deflectors } = get();
+    const nextBoxes = distributionBoxes.map((box) =>
+      box.id === id ? { ...box, rotationDeg: normalizeRotation(rotationDeg) } : box,
+    );
+    set({ distributionBoxes: nextBoxes, ductRouting: null, deflectors: recomputeDeflectors(deflectors, nextBoxes) });
+  },
+
+  placeDeflectorAt: (pt, ductType) => {
+    const { deflectors } = get();
+    // Placing several deflectors in a row (the whole point of staying in the tool) can
+    // land two clicks in the same millisecond, so the counter carries the uniqueness.
+    const id = `deflector-${Date.now()}-${deflectorCounter}`;
+    const deflector: VentDeflector = {
+      id,
+      name: `Deflector ${deflectorCounter++}`,
+      position: pt,
+      ductType,
+      airflowM3h: DEFAULT_DEFLECTOR_AIRFLOW_M3H,
+      airflowLabelPosition: DEFAULT_AIRFLOW_LABEL_POSITION,
+      distributionBoxId: null,
+      ductWaypoints: null,
+      ductLengthMm: 0,
+    };
+    // Stays in the placing tool (unlike closing a zone or finishing a rect) — a real
+    // floor plan usually needs several deflectors placed one after another.
+    set({ deflectors: [...deflectors, deflector], selectedDeflectorId: id, selectedDistributionBoxId: null });
+  },
+
+  deleteDeflector: (id) =>
+    set((state) => ({
+      deflectors: state.deflectors.filter((deflector) => deflector.id !== id),
+      selectedDeflectorId: state.selectedDeflectorId === id ? null : state.selectedDeflectorId,
+    })),
+
+  selectDeflector: (id) =>
+    set((state) => ({
+      selectedDeflectorId: id,
+      // Bumped even when `id` repeats the current selection, so the panel still scrolls
+      // to it if the user switched tabs away and clicked it again.
+      deflectorFocusNonce: id ? state.deflectorFocusNonce + 1 : state.deflectorFocusNonce,
+      ...(id ? { selectedDistributionBoxId: null, selectedVentZoneId: null } : {}),
+    })),
+
+  updateDeflectorName: (id, name) =>
+    set((state) => ({
+      deflectors: state.deflectors.map((deflector) => (deflector.id === id ? { ...deflector, name } : deflector)),
+    })),
+
+  updateDeflectorAirflowM3h: (id, m3h) => {
+    const normalizedM3h = Math.max(0, m3h);
+    set((state) => ({
+      deflectors: state.deflectors.map((deflector) =>
+        deflector.id === id ? { ...deflector, airflowM3h: normalizedM3h } : deflector,
+      ),
+    }));
+  },
+
+  updateDeflectorDuctType: (id, ductType) =>
+    set((state) => ({
+      deflectors: state.deflectors.map((deflector) => (deflector.id === id ? { ...deflector, ductType } : deflector)),
+    })),
+
+  updateDeflectorAirflowLabelPosition: (id, position) =>
+    set((state) => ({
+      deflectors: state.deflectors.map((deflector) =>
+        deflector.id === id ? { ...deflector, airflowLabelPosition: position } : deflector,
+      ),
+    })),
+
+  updateDeflectorPosition: (id, pt) => {
+    const { deflectors, distributionBoxes } = get();
+    const updated = deflectors.map((deflector) => (deflector.id === id ? { ...deflector, position: pt } : deflector));
+    set({ deflectors: recomputeDeflectors(updated, distributionBoxes) });
+  },
+
+  startRouteDuct: (deflectorId) => {
+    const deflector = get().deflectors.find((candidate) => candidate.id === deflectorId);
+    if (!deflector) return;
+
+    const deflectors = get().deflectors.map((candidate) =>
+      candidate.id === deflectorId ? clearDeflectorDuctRouting(candidate) : candidate,
+    );
+    set((state) => ({
+      deflectors,
+      ductRouting: { deflectorId, points: [] },
+      selectedDeflectorId: deflectorId,
+      deflectorFocusNonce: state.deflectorFocusNonce + 1,
+    }));
+  },
+
+  addDuctRoutePoint: (rawPt) => {
+    const { ductRouting, deflectors, distributionBoxes } = get();
+    if (!ductRouting) return;
+    const deflector = deflectors.find((candidate) => candidate.id === ductRouting.deflectorId);
+    if (!deflector) return;
+
+    const hitBox = distributionBoxes.find((box) =>
+      isPointOnDistributionBox(rawPt, box, DISTRIBUTION_BOX_CLICK_MARGIN_MM),
+    );
+    if (hitBox) {
+      const updatedDeflector: VentDeflector = {
+        ...deflector,
+        distributionBoxId: hitBox.id,
+        ductWaypoints: ductRouting.points,
+      };
+      set({
+        deflectors: deflectors.map((candidate) =>
+          candidate.id === deflector.id
+            ? { ...updatedDeflector, ductLengthMm: computeDuctLengthMm(updatedDeflector, distributionBoxes) }
+            : candidate,
+        ),
+        ductRouting: null,
+      });
+      return;
+    }
+
+    const anchor = deflector.position;
+    const points = ductRouting.points;
+    const snapped =
+      points.length === 0
+        ? snapFirstDuctPoint(anchor, rawPt, MIN_DUCT_SEGMENT_MM)
+        : snapElbowPoint(points[points.length - 1], rawPt, getDuctIncomingDirection(anchor, points), MIN_DUCT_SEGMENT_MM);
+
+    set({ ductRouting: { ...ductRouting, points: [...points, snapped] } });
+  },
+
+  finishDuctRoutingAtPoint: () => {
+    const { ductRouting, deflectors } = get();
+    if (!ductRouting || ductRouting.points.length === 0) return;
+    const deflector = deflectors.find((candidate) => candidate.id === ductRouting.deflectorId);
+    if (!deflector) return;
+
+    const updatedDeflector: VentDeflector = {
+      ...deflector,
+      distributionBoxId: null,
+      ductWaypoints: ductRouting.points,
+      ductLengthMm: pathLengthMm([deflector.position, ...ductRouting.points]),
+    };
+    set({
+      deflectors: deflectors.map((candidate) => (candidate.id === deflector.id ? updatedDeflector : candidate)),
+      ductRouting: null,
+    });
+  },
+
+  cancelDuctRouting: () => set({ ductRouting: null }),
+
+  updateDuctWaypoint: (deflectorId, waypointIndex, pt, reflow) => {
+    const { deflectors, distributionBoxes } = get();
+    const deflector = deflectors.find((candidate) => candidate.id === deflectorId);
+    if (!deflector || !deflector.ductWaypoints) return;
+
+    const updatedWaypoints = deflector.ductWaypoints.map((point, i) => (i === waypointIndex ? pt : point));
+    // Same drag-move-vs-drag-end split as the leader's equivalent: only restructure the
+    // array (insert/drop bend points) on drag-end, so the dragged handle's index stays
+    // valid for the rest of the gesture.
+    const repaired = reflow ? reflowLeaderWaypoints(deflector.position, updatedWaypoints) : updatedWaypoints;
+    const updatedDeflector = { ...deflector, ductWaypoints: repaired };
+    set({
+      deflectors: deflectors.map((candidate) =>
+        candidate.id === deflectorId
+          ? { ...updatedDeflector, ductLengthMm: computeDuctLengthMm(updatedDeflector, distributionBoxes) }
+          : candidate,
+      ),
+    });
+  },
+
+  updateDuctSegment: (deflectorId, waypointIndexA, waypointIndexB, axis, value, reflow) => {
+    const { deflectors, distributionBoxes } = get();
+    const deflector = deflectors.find((candidate) => candidate.id === deflectorId);
+    if (!deflector || !deflector.ductWaypoints) return;
+
+    const updatedWaypoints = deflector.ductWaypoints.map((point, i) => {
+      if (i !== waypointIndexA && i !== waypointIndexB) return point;
+      return axis === 'x' ? { x: value, y: point.y } : { x: point.x, y: value };
+    });
+    const repaired = reflow ? reflowLeaderWaypoints(deflector.position, updatedWaypoints) : updatedWaypoints;
+    const updatedDeflector = { ...deflector, ductWaypoints: repaired };
+    set({
+      deflectors: deflectors.map((candidate) =>
+        candidate.id === deflectorId
+          ? { ...updatedDeflector, ductLengthMm: computeDuctLengthMm(updatedDeflector, distributionBoxes) }
+          : candidate,
+      ),
+    });
+  },
+
   addDrawingPoint: (pt) => set((state) => ({ drawingPoints: [...state.drawingPoints, pt] })),
 
   closeZone: () => {
-    const { drawingPoints, zones, defaultSpacingMm } = get();
+    const { drawingPoints, zones, defaultSpacingMm, defaultFlowLpmPer100m } = get();
     if (drawingPoints.length < 3) {
       set({ drawingPoints: [] });
       return;
@@ -961,9 +1701,11 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
       polygon: { points: drawingPoints },
       spacingMm: defaultSpacingMm,
       paddingMm: DEFAULT_ZONE_PADDING_MM,
+      flowLpmPer100m: defaultFlowLpmPer100m,
       connectionCorner: DEFAULT_ZONE_CONNECTION_CORNER,
       startDirection: DEFAULT_ZONE_START_DIRECTION,
       spiral: null,
+      spiralOverride: null,
       spiralLengthMm: 0,
       leaderLengthMm: 0,
       areaMm2: 0,
@@ -986,7 +1728,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
   startDrawRect: (pt) => set({ drawRectStart: pt }),
 
   finishDrawRect: (pt) => {
-    const { drawRectStart, zones, defaultSpacingMm } = get();
+    const { drawRectStart, zones, defaultSpacingMm, defaultFlowLpmPer100m } = get();
     if (!drawRectStart) return;
 
     // Need at least a minimal area (avoid degenerate rects)
@@ -1004,9 +1746,11 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
       polygon: rectPolygon(drawRectStart, pt),
       spacingMm: defaultSpacingMm,
       paddingMm: DEFAULT_ZONE_PADDING_MM,
+      flowLpmPer100m: defaultFlowLpmPer100m,
       connectionCorner: DEFAULT_ZONE_CONNECTION_CORNER,
       startDirection: DEFAULT_ZONE_START_DIRECTION,
       spiral: null,
+      spiralOverride: null,
       spiralLengthMm: 0,
       leaderLengthMm: 0,
       areaMm2: 0,
@@ -1058,6 +1802,15 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
     set({ zones: updated });
   },
 
+  updateZoneFlowLpmPer100m: (id, lpm) => {
+    const normalizedLpm = Math.max(0.1, lpm);
+    set((state) => ({
+      zones: state.zones.map((zone) =>
+        zone.id === id ? { ...zone, flowLpmPer100m: normalizedLpm } : zone,
+      ),
+    }));
+  },
+
   updateZoneConnectionCorner: (id, corner) =>
     set((state) => {
       const updated = state.zones.map((zone) => {
@@ -1093,50 +1846,22 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
       if (zone.id !== zoneId) return zone;
       const manifold = manifolds.find((m) => m.id === zone.manifoldId) ?? null;
       const originalPoints = zone.polygon.points;
-      let points: Point[];
-      if (isAxisAlignedRect(originalPoints)) {
-        points = resizeRectFromCorner(originalPoints, vertexIdx, pt);
-      } else {
-        points = [...originalPoints];
-        points[vertexIdx] = pt;
-      }
+      const points = isAxisAlignedRect(originalPoints)
+        ? resizeRectFromCorner(originalPoints, vertexIdx, pt)
+        : originalPoints.map((point, i) => (i === vertexIdx ? pt : point));
+      return applyZonePolygonPoints(zone, manifold, points);
+    });
+    set({ zones: updated });
+  },
 
-      const previousStubs = zone.spiral ? getSpiralStubs(zone.spiral) : null;
-      const recomputed = recomputeSpiral({ ...zone, polygon: { points } }, manifold, {
-        preserveLeaderRouting: true,
-      });
-
-      if (!zone.leaderWaypoints || !previousStubs || !recomputed.spiral || !manifold) {
-        // Nothing routed yet, or no spiral/manifold to compare against — nothing to preserve.
-        return {
-          ...recomputed,
-          leaderWaypoints: null,
-          manifoldPortOffsetMm: null,
-          manifoldId: null,
-          leaderLengthMm: 0,
-        };
-      }
-
-      const newStubs = getSpiralStubs(recomputed.spiral);
-      const anchorShiftMm = newStubs
-        ? distanceMm(midpoint(previousStubs.start, previousStubs.end), midpoint(newStubs.start, newStubs.end))
-        : Infinity;
-
-      if (anchorShiftMm > ZONE_RESIZE_ROUTING_TOLERANCE_MM) {
-        // The connection point moved enough that the old routing no longer makes sense.
-        return {
-          ...recomputed,
-          leaderWaypoints: null,
-          manifoldPortOffsetMm: null,
-          manifoldId: null,
-          leaderLengthMm: 0,
-        };
-      }
-
-      // Barely moved — keep the routing, just repair the first segment against the new anchor.
-      return (
-        withLeaderWaypoints(recomputed, manifold, zone.leaderWaypoints, true) ?? recomputed
-      );
+  insertZoneVertex: (zoneId, afterIndex, pt) => {
+    const { zones, manifolds } = get();
+    const updated = zones.map((zone) => {
+      if (zone.id !== zoneId) return zone;
+      const manifold = manifolds.find((m) => m.id === zone.manifoldId) ?? null;
+      const points = [...zone.polygon.points];
+      points.splice(afterIndex + 1, 0, pt);
+      return applyZonePolygonPoints(zone, manifold, points);
     });
     set({ zones: updated });
   },
@@ -1188,6 +1913,28 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
     set({ routing: { ...routing, points: [...routing.points, snapped] } });
   },
 
+  finishRoutingAtPoint: () => {
+    const { routing, zones } = get();
+    if (!routing || routing.points.length === 0) return;
+    const zone = zones.find((candidate) => candidate.id === routing.zoneId);
+    if (!zone || !zone.spiral) return;
+    const stubs = getSpiralStubs(zone.spiral);
+    if (!stubs) return;
+
+    const anchor = midpoint(stubs.start, stubs.end);
+    const updatedZone: Zone = {
+      ...zone,
+      leaderWaypoints: routing.points,
+      manifoldId: null,
+      manifoldPortOffsetMm: null,
+      leaderLengthMm: openLeaderLengthMm(anchor, routing.points),
+    };
+    set({
+      zones: zones.map((candidate) => (candidate.id === zone.id ? updatedZone : candidate)),
+      routing: null,
+    });
+  },
+
   cancelRouting: () => set({ routing: null }),
 
   updateLeaderWaypoint: (zoneId, waypointIndex, pt, reflow) => {
@@ -1195,13 +1942,15 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
     const zone = zones.find((candidate) => candidate.id === zoneId);
     if (!zone || !zone.leaderWaypoints) return;
     const manifold = manifolds.find((candidate) => candidate.id === zone.manifoldId);
-    if (!manifold) return;
+    if (zone.manifoldId && !manifold) return;
 
     const updatedWaypoints = zone.leaderWaypoints.map((point, i) => (i === waypointIndex ? pt : point));
     // Only restructure the array (insert/drop bend points) on drag-end. Doing it on every
     // live drag-move would change the array's length mid-gesture, invalidating the dragged
     // circle's waypointIndex (captured when the drag started) for subsequent move events.
-    const updatedZone = withLeaderWaypoints(zone, manifold, updatedWaypoints, reflow);
+    const updatedZone = manifold
+      ? withLeaderWaypoints(zone, manifold, updatedWaypoints, reflow)
+      : withOpenLeaderWaypoints(zone, updatedWaypoints, reflow);
     if (!updatedZone) return;
     set({ zones: zones.map((candidate) => (candidate.id === zoneId ? updatedZone : candidate)) });
   },
@@ -1211,7 +1960,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
     const zone = zones.find((candidate) => candidate.id === zoneId);
     if (!zone || !zone.leaderWaypoints) return;
     const manifold = manifolds.find((candidate) => candidate.id === zone.manifoldId);
-    if (!manifold) return;
+    if (zone.manifoldId && !manifold) return;
 
     const updatedWaypoints = zone.leaderWaypoints.map((point, i) => {
       if (i !== waypointIndexA && i !== waypointIndexB) return point;
@@ -1219,7 +1968,9 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
     });
     // Same drag-move-vs-drag-end split as updateLeaderWaypoint: keep the array shape stable
     // (both waypointIndexA/B still valid) while dragging, only restructuring at the end.
-    const updatedZone = withLeaderWaypoints(zone, manifold, updatedWaypoints, reflow);
+    const updatedZone = manifold
+      ? withLeaderWaypoints(zone, manifold, updatedWaypoints, reflow)
+      : withOpenLeaderWaypoints(zone, updatedWaypoints, reflow);
     if (!updatedZone) return;
     set({ zones: zones.map((candidate) => (candidate.id === zoneId ? updatedZone : candidate)) });
   },
@@ -1289,6 +2040,57 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
     set({ zones: zones.map((candidate) => (candidate.id === zoneId ? updatedZone : candidate)) });
   },
 
+  updateSpiralCorner: (zoneId, corner, value, commit) => {
+    const { zones, manifolds } = get();
+    const zone = zones.find((candidate) => candidate.id === zoneId);
+    if (!zone || !zone.spiral) return;
+
+    // The first edit starts from the fill currently on screen; later edits build on the
+    // override already in progress, so earlier nudges of other corners aren't lost.
+    const basePath = zone.spiralOverride ?? zone.spiral;
+    if (corner.laneA.endIndex >= basePath.length || corner.laneB.endIndex >= basePath.length) return;
+
+    const previousStubs = getSpiralStubs(basePath);
+    const nextPath = setSpiralCorner(basePath, corner, value);
+
+    let updatedZone: Zone = {
+      ...zone,
+      spiral: nextPath,
+      spiralOverride: nextPath,
+      spiralLengthMm: pathLengthMm(nextPath),
+    };
+
+    // The leader anchors to the spiral's two open ends, so only reconcile it once the
+    // gesture commits — dragging a lane that happens to include a stub end can move them.
+    if (commit && zone.leaderWaypoints) {
+      const manifold = manifolds.find((candidate) => candidate.id === zone.manifoldId) ?? null;
+      const newStubs = getSpiralStubs(nextPath);
+      const anchorShiftMm =
+        previousStubs && newStubs
+          ? distanceMm(midpoint(previousStubs.start, previousStubs.end), midpoint(newStubs.start, newStubs.end))
+          : Infinity;
+
+      updatedZone =
+        anchorShiftMm > ZONE_RESIZE_ROUTING_TOLERANCE_MM
+          ? clearZoneLeaderRouting(updatedZone)
+          : manifold
+            ? withLeaderWaypoints(updatedZone, manifold, zone.leaderWaypoints, true) ?? updatedZone
+            : withOpenLeaderWaypoints(updatedZone, zone.leaderWaypoints, true) ?? updatedZone;
+    }
+
+    set({ zones: zones.map((candidate) => (candidate.id === zoneId ? updatedZone : candidate)) });
+  },
+
+  resetSpiralOverride: (zoneId) => {
+    const { zones, manifolds } = get();
+    const updated = zones.map((zone) => {
+      if (zone.id !== zoneId || !zone.spiralOverride) return zone;
+      const manifold = manifolds.find((candidate) => candidate.id === zone.manifoldId) ?? null;
+      return recomputeSpiral({ ...zone, spiralOverride: null }, manifold);
+    });
+    set({ zones: updated });
+  },
+
   rescaleBackground: (factor, anchor) => {
     if (!Number.isFinite(factor) || factor <= 0 || factor === 1) return;
     const { background } = get();
@@ -1315,7 +2117,7 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
 
   setReturnTempC: (celsius) => set({ returnTempC: celsius }),
 
-  setFlowLpmPer100m: (lpm) => set({ flowLpmPer100m: lpm }),
+  setDefaultFlowLpmPer100m: (lpm) => set({ defaultFlowLpmPer100m: lpm }),
 
   setPipeOuterDiameter: (mm) => set({ pipeOuterDiameterMm: mm }),
 
@@ -1393,6 +2195,103 @@ const createStoreState: StateCreator<StoreState, [], []> = (set, get) => {
         : zone,
     );
     set({ zones: updated });
+  },
+
+  closeVentZone: () => {
+    const { drawingPoints, ventZones } = get();
+    if (drawingPoints.length < 3) {
+      set({ drawingPoints: [] });
+      return;
+    }
+
+    const colorIdx = ventZones.length % ZONE_COLORS.length;
+    const id = `vent-zone-${Date.now()}-${ventZoneCounter}`;
+    const newZone: VentZone = {
+      id,
+      name: `Zone ${ventZoneCounter++}`,
+      color: ZONE_COLORS[colorIdx],
+      polygon: { points: drawingPoints },
+    };
+    set({
+      ventZones: [...ventZones, newZone],
+      drawingPoints: [],
+      toolMode: 'select',
+      selectedVentZoneId: id,
+      selectedDeflectorId: null,
+      selectedDistributionBoxId: null,
+    });
+  },
+
+  finishDrawVentRect: (pt) => {
+    const { drawRectStart, ventZones } = get();
+    if (!drawRectStart) return;
+
+    // Need at least a minimal area (avoid degenerate rects)
+    if (Math.abs(pt.x - drawRectStart.x) < 2 || Math.abs(pt.y - drawRectStart.y) < 2) {
+      set({ drawRectStart: null, toolMode: 'select' });
+      return;
+    }
+
+    const colorIdx = ventZones.length % ZONE_COLORS.length;
+    const id = `vent-zone-${Date.now()}-${ventZoneCounter}`;
+    const newZone: VentZone = {
+      id,
+      name: `Zone ${ventZoneCounter++}`,
+      color: ZONE_COLORS[colorIdx],
+      polygon: rectPolygon(drawRectStart, pt),
+    };
+    set({
+      ventZones: [...ventZones, newZone],
+      drawRectStart: null,
+      toolMode: 'select',
+      selectedVentZoneId: id,
+      selectedDeflectorId: null,
+      selectedDistributionBoxId: null,
+    });
+  },
+
+  deleteVentZone: (id) =>
+    set((state) => ({
+      ventZones: state.ventZones.filter((zone) => zone.id !== id),
+      selectedVentZoneId: state.selectedVentZoneId === id ? null : state.selectedVentZoneId,
+    })),
+
+  selectVentZone: (id) =>
+    set((state) => ({
+      selectedVentZoneId: id,
+      // Same reasoning as `deflectorFocusNonce`: bumped even on a repeat selection, so
+      // the panel scrolls back to it after the user switches tabs away and clicks it again.
+      ventZoneFocusNonce: id ? state.ventZoneFocusNonce + 1 : state.ventZoneFocusNonce,
+      ...(id ? { selectedDeflectorId: null, selectedDistributionBoxId: null } : {}),
+    })),
+
+  updateVentZoneName: (id, name) =>
+    set((state) => ({
+      ventZones: state.ventZones.map((zone) => (zone.id === id ? { ...zone, name } : zone)),
+    })),
+
+  updateVentZoneVertex: (zoneId, vertexIdx, pt) => {
+    const { ventZones } = get();
+    const updated = ventZones.map((zone) => {
+      if (zone.id !== zoneId) return zone;
+      const originalPoints = zone.polygon.points;
+      const points = isAxisAlignedRect(originalPoints)
+        ? resizeRectFromCorner(originalPoints, vertexIdx, pt)
+        : originalPoints.map((point, i) => (i === vertexIdx ? pt : point));
+      return { ...zone, polygon: { points } };
+    });
+    set({ ventZones: updated });
+  },
+
+  insertVentZoneVertex: (zoneId, afterIndex, pt) => {
+    const { ventZones } = get();
+    const updated = ventZones.map((zone) => {
+      if (zone.id !== zoneId) return zone;
+      const points = [...zone.polygon.points];
+      points.splice(afterIndex + 1, 0, pt);
+      return { ...zone, polygon: { points } };
+    });
+    set({ ventZones: updated });
   },
   };
 };

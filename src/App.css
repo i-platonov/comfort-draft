@@ -86,6 +86,10 @@ input {
 }
 
 .panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 16px;
   border-bottom: 1px solid var(--border);
   background: var(--surface-sunken);
@@ -95,6 +99,33 @@ input {
   font-size: 16px;
   font-weight: 600;
   color: var(--accent);
+}
+
+.language-selector {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.language-selector .lucide {
+  width: 14px;
+  height: 14px;
+}
+
+.language-selector select {
+  padding: 3px 4px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.language-selector select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .side-panel-tabs {
@@ -336,6 +367,47 @@ input {
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
+}
+
+/*
+ * The top-level switch between the two independent design workspaces — deliberately
+ * heavier than a .side-panel-tab (larger, bordered, its own row) since it decides which
+ * whole system is being edited, not which view onto one system.
+ */
+.design-mode-switcher {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
+}
+
+.design-mode-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.design-mode-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.design-mode-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-inverse);
 }
 
 .tool-btn {

@@ -1,7 +1,9 @@
-import { type ChangeEvent, useRef, useState } from 'react';
+import { type ChangeEvent, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import DxfParser from 'dxf-parser';
 import {
     Check,
+    Compass,
     FolderOpen,
     Home,
     Flame,
@@ -12,18 +14,22 @@ import {
     Ruler,
     Save,
     Settings,
-    Thermometer,
     Trash2,
     Upload,
+    Wind,
     Wrench,
 } from 'lucide-react';
 import { parseDxfEntities, placeDxfInDrawing } from '../../geometry/dxfHelpers';
 import { mmToMeters } from '../../geometry/length';
 import { UFH_STORE_STORAGE_KEY, partializeStoreState, useStore } from '../../state/store';
 import HeatTab from './HeatTab';
+import VentTab from './VentTab';
+import VentZonesTab from './VentZonesTab';
 import { COMMON_PIPE_OUTER_DIAMETERS_MM, PIPE_WALL_MM } from '../../geometry/heat';
+import { COMMON_DUCT_DIAMETERS_MM } from '../../geometry/ductRouting';
 import ZoneCard from './ZoneCard';
 import ManifoldCard from './ManifoldCard';
+import LanguageSelector from './LanguageSelector';
 
 const PROJECT_STORAGE_VERSION = 0;
 
@@ -37,22 +43,34 @@ const IMAGE_ACCEPT = '.png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp
 const ASSUMED_IMAGE_MM_PER_PIXEL = 10;
 
 export default function SidePanel() {
+    const { t } = useTranslation();
     const {
         zones,
         selectedZoneId,
         manifolds,
         selectedManifoldId,
+        designMode,
+        setDesignMode,
+        selectedDeflectorId,
+        deflectorFocusNonce,
+        ventZones,
+        selectedVentZoneId,
+        ventZoneFocusNonce,
         calibration,
         maxCircuitLengthM,
         defaultSpacingMm,
+        defaultFlowLpmPer100m,
         pipeOuterDiameterMm,
         setPipeOuterDiameter,
+        ductDiameterMm,
+        setDuctDiameterMm,
         background,
         toolMode,
         setToolMode,
         setBackground,
         setMaxCircuitLength,
         setDefaultSpacing,
+        setDefaultFlowLpmPer100m,
         addManifold,
         startCalibration,
         finishCalibration,
@@ -65,7 +83,27 @@ export default function SidePanel() {
     const [calibrationDistance, setCalibrationDistance] = useState('1000');
     const [importError, setImportError] = useState<string | null>(null);
     const [projectError, setProjectError] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<'setup' | 'zones' | 'heat'>('setup');
+    const [activeTab, setActiveTab] = useState<'setup' | 'zones' | 'heat' | 'vent'>('setup');
+
+    // The tab bar's own options depend on which workspace is active (see below) — jump back
+    // to Setup on a switch rather than leaving the panel on a tab that no longer has a button.
+    useEffect(() => {
+        setActiveTab('setup');
+    }, [designMode]);
+
+    // Selecting a deflector on the canvas should bring its card on screen — which first
+    // means being on the tab that actually renders it, before VentTab can scroll to it.
+    // Keyed on the nonce (not just the id) so re-clicking the same already-selected
+    // deflector after switching tabs away still brings it back.
+    useEffect(() => {
+        if (selectedDeflectorId) setActiveTab('vent');
+    }, [deflectorFocusNonce, selectedDeflectorId]);
+
+    // Same reasoning, for a vent zone selected on the canvas — jump to the Zones tab so
+    // VentZonesTab can then scroll its card into view.
+    useEffect(() => {
+        if (selectedVentZoneId) setActiveTab('zones');
+    }, [ventZoneFocusNonce, selectedVentZoneId]);
 
     const handleSaveProject = () => {
         const persisted = partializeStoreState(useStore.getState());
@@ -89,21 +127,21 @@ export default function SidePanel() {
             try {
                 const parsed = JSON.parse(loadEvent.target?.result as string);
                 if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.zones)) {
-                    setProjectError('Not a valid UFH Designer project file.');
+                    setProjectError(t('sidePanel.project.invalidFile'));
                     return;
                 }
-                if (!window.confirm('Loading a project replaces your current work. Continue?')) return;
+                if (!window.confirm(t('sidePanel.project.confirmReplace'))) return;
                 localStorage.setItem(
                     UFH_STORE_STORAGE_KEY,
                     JSON.stringify({ state: parsed, version: PROJECT_STORAGE_VERSION }),
                 );
                 window.location.reload();
             } catch (error) {
-                setProjectError('Failed to load project file. Make sure it is a valid exported UFH Designer file.');
+                setProjectError(t('sidePanel.project.loadFailed'));
                 console.error(error);
             }
         };
-        reader.onerror = () => setProjectError('Failed to read file.');
+        reader.onerror = () => setProjectError(t('sidePanel.project.readFailed'));
         reader.readAsText(file);
     };
 
@@ -124,7 +162,7 @@ export default function SidePanel() {
                     const dxf = parser.parseSync(content);
                     const entities = parseDxfEntities(dxf as { entities: unknown[] });
                     if (entities.length === 0) {
-                        setImportError('DXF parsed but contains no supported entities (LINE, POLYLINE, CIRCLE, ARC). Try importing an image instead.');
+                        setImportError(t('sidePanel.floorPlan.dxfNoEntities'));
                         return;
                     }
                     // DXF units are assumed to be millimetres (AutoCAD's own default);
@@ -139,7 +177,7 @@ export default function SidePanel() {
                         window.innerHeight - 44,
                     );
                 } catch (error) {
-                    setImportError('Failed to parse DXF. Make sure it is a valid AutoCAD DXF file, or try importing an image.');
+                    setImportError(t('sidePanel.floorPlan.dxfParseFailed'));
                     console.error(error);
                 }
             };
@@ -150,7 +188,7 @@ export default function SidePanel() {
             reader.onload = (loadEvent) => {
                 const src = loadEvent.target?.result;
                 if (typeof src !== 'string') {
-                    setImportError('Failed to read image file.');
+                    setImportError(t('sidePanel.floorPlan.imageReadFailed'));
                     return;
                 }
 
@@ -174,12 +212,12 @@ export default function SidePanel() {
                     );
                 };
                 img.onerror = () => {
-                    setImportError('Failed to load image file.');
+                    setImportError(t('sidePanel.floorPlan.imageLoadFailed'));
                 };
                 img.src = src;
             };
             reader.onerror = () => {
-                setImportError('Failed to read image file.');
+                setImportError(t('sidePanel.floorPlan.imageReadFailed'));
             };
             reader.readAsDataURL(file);
         }
@@ -195,13 +233,29 @@ export default function SidePanel() {
     const bgStatus = background === null
         ? null
         : background.kind === 'dxf'
-            ? `DXF loaded – ${background.entities.length} entities`
-            : `Image loaded – ${background.naturalWidth}×${background.naturalHeight} px`;
+            ? t('sidePanel.floorPlan.dxfLoaded', { count: background.entities.length })
+            : t('sidePanel.floorPlan.imageLoaded', { width: background.naturalWidth, height: background.naturalHeight });
 
     return (
         <div className="side-panel">
             <div className="panel-header">
-                <h1><Thermometer /> UFH Designer</h1>
+                <h1><Compass /> {t('sidePanel.appTitle')}</h1>
+                <LanguageSelector />
+            </div>
+
+            <div className="design-mode-switcher">
+                <button
+                    className={`design-mode-btn ${designMode === 'heating' ? 'active' : ''}`}
+                    onClick={() => setDesignMode('heating')}
+                >
+                    <Flame /> {t('designMode.heating')}
+                </button>
+                <button
+                    className={`design-mode-btn ${designMode === 'ventilation' ? 'active' : ''}`}
+                    onClick={() => setDesignMode('ventilation')}
+                >
+                    <Wind /> {t('designMode.ventilation')}
+                </button>
             </div>
 
             <div className="side-panel-tabs">
@@ -209,26 +263,46 @@ export default function SidePanel() {
                     className={`side-panel-tab ${activeTab === 'setup' ? 'active' : ''}`}
                     onClick={() => setActiveTab('setup')}
                 >
-                    <Settings /> Setup
+                    <Settings /> {t('tabs.setup')}
                 </button>
-                <button
-                    className={`side-panel-tab ${activeTab === 'zones' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('zones')}
-                >
-                    <Home /> Zones {zones.length > 0 && <><br/><span className="zone-count">{zones.length}</span></>}
-                </button>
-                <button
-                    className={`side-panel-tab ${activeTab === 'heat' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('heat')}
-                >
-                    <Flame /> Heat
-                </button>
+                {designMode === 'heating' && (
+                    <>
+                        <button
+                            className={`side-panel-tab ${activeTab === 'zones' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('zones')}
+                        >
+                            <Home /> {t('tabs.zones')} {zones.length > 0 && <><br/><span className="zone-count">{zones.length}</span></>}
+                        </button>
+                        <button
+                            className={`side-panel-tab ${activeTab === 'heat' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('heat')}
+                        >
+                            <Flame /> {t('tabs.heat')}
+                        </button>
+                    </>
+                )}
+                {designMode === 'ventilation' && (
+                    <>
+                        <button
+                            className={`side-panel-tab ${activeTab === 'zones' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('zones')}
+                        >
+                            <Home /> {t('tabs.zones')} {ventZones.length > 0 && <><br/><span className="zone-count">{ventZones.length}</span></>}
+                        </button>
+                        <button
+                            className={`side-panel-tab ${activeTab === 'vent' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('vent')}
+                        >
+                            <Wind /> {t('tabs.vent')}
+                        </button>
+                    </>
+                )}
             </div>
 
             {activeTab === 'setup' && (
                 <div className="side-panel-tab-content">
                     <section className="panel-section">
-                        <h2><Save /> Project</h2>
+                        <h2><Save /> {t('sidePanel.project.title')}</h2>
                         <input
                             ref={projectFileInputRef}
                             type="file"
@@ -237,20 +311,20 @@ export default function SidePanel() {
                             style={{ display: 'none' }}
                         />
                         <button className="btn" onClick={handleSaveProject}>
-                            <Save /> Save Project
+                            <Save /> {t('sidePanel.project.save')}
                         </button>
                         <button
                             className="btn btn-secondary"
                             style={{ marginTop: '4px' }}
                             onClick={() => projectFileInputRef.current?.click()}
                         >
-                            <FolderOpen /> Load Project
+                            <FolderOpen /> {t('sidePanel.project.load')}
                         </button>
                         {projectError && <p className="error">{projectError}</p>}
                     </section>
 
                     <section className="panel-section">
-                        <h2><Map /> Floor Plan</h2>
+                        <h2><Map /> {t('sidePanel.floorPlan.title')}</h2>
                         <input
                             ref={fileInputRef}
                             type="file"
@@ -259,10 +333,10 @@ export default function SidePanel() {
                             style={{ display: 'none' }}
                         />
                         <button className="btn" onClick={() => fileInputRef.current?.click()}>
-                            {background ? <><RefreshCw /> Re-import DXF or Image</> : <><Upload /> Import DXF or Image</>}
+                            {background ? <><RefreshCw /> {t('sidePanel.floorPlan.reimport')}</> : <><Upload /> {t('sidePanel.floorPlan.import')}</>}
                         </button>
                         <p className="info" style={{ fontSize: '0.75rem' }}>
-                            Accepts: DXF, PNG, JPG, WEBP, GIF
+                            {t('sidePanel.floorPlan.accepts')}
                         </p>
                         {importError && <p className="error">{importError}</p>}
                         {bgStatus && <p className="info">{bgStatus}</p>}
@@ -275,41 +349,39 @@ export default function SidePanel() {
                                         setToolMode(toolMode === 'panBackground' ? 'select' : 'panBackground')
                                     }
                                 >
-                                    <Move /> {toolMode === 'panBackground' ? 'Done moving plan' : 'Move plan'}
+                                    <Move /> {toolMode === 'panBackground' ? t('sidePanel.floorPlan.doneMovingPlan') : t('sidePanel.floorPlan.movePlan')}
                                 </button>
                                 <button
                                     className="btn btn-secondary"
                                     style={{ marginTop: '4px' }}
                                     onClick={() => setBackground(null)}
                                 >
-                                    <Trash2 /> Clear background
+                                    <Trash2 /> {t('sidePanel.floorPlan.clearBackground')}
                                 </button>
                             </>
                         )}
                     </section>
 
                     <section className="panel-section">
-                        <h2><Ruler /> Scale Calibration</h2>
+                        <h2><Ruler /> {t('sidePanel.calibration.title')}</h2>
                         <p className="info">
-                            The drawing is in millimetres, so zones are already true to size.
-                            Calibrating resizes the imported plan to match them — measure two
-                            points on the plan and give their real distance.
+                            {t('sidePanel.calibration.description')}
                         </p>
                         {!background && (
-                            <p className="info">Import a floor plan first — there is nothing to calibrate.</p>
+                            <p className="info">{t('sidePanel.calibration.importFirst')}</p>
                         )}
                         {!calibration.active ? (
                             <button className="btn" onClick={startCalibration} disabled={!background}>
-                                <Ruler /> Calibrate Scale
+                                <Ruler /> {t('sidePanel.calibration.calibrateScale')}
                             </button>
                         ) : (
                             <div>
                                 <p className="info">
                                     {!calibration.point1
-                                        ? 'Click a point on the plan — it stays put as the plan resizes'
+                                        ? t('sidePanel.calibration.clickFirstPoint')
                                         : !calibration.point2
-                                            ? 'Click a second point a known distance away'
-                                            : 'Enter the real distance between the points'}
+                                            ? t('sidePanel.calibration.clickSecondPoint')
+                                            : t('sidePanel.calibration.enterDistance')}
                                 </p>
                                 {calibration.point2 && (
                                     <div className="calibration-input">
@@ -319,91 +391,125 @@ export default function SidePanel() {
                                             min="1"
                                             value={calibrationDistance}
                                             onChange={(event) => setCalibrationDistance(event.target.value)}
-                                            placeholder="Real distance (mm)"
+                                            placeholder={t('sidePanel.calibration.distancePlaceholder')}
                                         />
                                         <span>mm</span>
                                         <button
                                             className="btn btn-primary"
                                             onClick={() => finishCalibration(Number(calibrationDistance))}
                                         >
-                                            <Check /> Apply
+                                            <Check /> {t('sidePanel.calibration.apply')}
                                         </button>
                                     </div>
                                 )}
                                 <button className="btn btn-secondary" onClick={cancelCalibration}>
-                                    Cancel
+                                    {t('sidePanel.calibration.cancel')}
                                 </button>
                             </div>
                         )}
                     </section>
 
                     <section className="panel-section">
-                        <h2><Settings /> Default Settings</h2>
-                        <div className="setting-row">
-                            <label>Max circuit length:</label>
-                            <input
-                                type="number"
-                                min={10}
-                                max={500}
-                                value={maxCircuitLengthM}
-                                onChange={(event) => setMaxCircuitLength(Number(event.target.value))}
-                            />
-                            <span>m</span>
-                        </div>
-                        <div className="setting-row">
-                            <label>Default spacing:</label>
-                            <input
-                                type="number"
-                                min={50}
-                                max={500}
-                                value={defaultSpacingMm}
-                                onChange={(event) => setDefaultSpacing(Number(event.target.value))}
-                            />
-                            <span>mm</span>
-                        </div>
-                        <div className="setting-row">
-                            <label>Pipe size:</label>
-                            <select
-                                className="zone-select"
-                                value={pipeOuterDiameterMm}
-                                onChange={(event) => setPipeOuterDiameter(Number(event.target.value))}
-                            >
-                                {COMMON_PIPE_OUTER_DIAMETERS_MM.map((od) => (
-                                    <option key={od} value={od}>
-                                        {od}&times;{PIPE_WALL_MM} mm
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
+                        <h2><Settings /> {t('sidePanel.defaults.title')}</h2>
+                        {designMode === 'heating' && (
+                            <>
+                                <div className="setting-row">
+                                    <label>{t('sidePanel.defaults.maxCircuitLength')}</label>
+                                    <input
+                                        type="number"
+                                        min={10}
+                                        max={500}
+                                        value={maxCircuitLengthM}
+                                        onChange={(event) => setMaxCircuitLength(Number(event.target.value))}
+                                    />
+                                    <span>m</span>
+                                </div>
+                                <div className="setting-row">
+                                    <label>{t('sidePanel.defaults.defaultSpacing')}</label>
+                                    <input
+                                        type="number"
+                                        min={50}
+                                        max={500}
+                                        value={defaultSpacingMm}
+                                        onChange={(event) => setDefaultSpacing(Number(event.target.value))}
+                                    />
+                                    <span>mm</span>
+                                </div>
+                                <div className="setting-row">
+                                    <label>{t('sidePanel.defaults.defaultFlowRate')}</label>
+                                    <input
+                                        type="number"
+                                        min={0.1}
+                                        max={10}
+                                        step={0.1}
+                                        value={defaultFlowLpmPer100m}
+                                        onChange={(event) => setDefaultFlowLpmPer100m(Number(event.target.value))}
+                                    />
+                                    <span>L/min per 100m</span>
+                                </div>
+                                <div className="setting-row">
+                                    <label>{t('sidePanel.defaults.pipeSize')}</label>
+                                    <select
+                                        className="zone-select"
+                                        value={pipeOuterDiameterMm}
+                                        onChange={(event) => setPipeOuterDiameter(Number(event.target.value))}
+                                    >
+                                        {COMMON_PIPE_OUTER_DIAMETERS_MM.map((od) => (
+                                            <option key={od} value={od}>
+                                                {od}&times;{PIPE_WALL_MM} mm
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </>
+                        )}
+                        {designMode === 'ventilation' && (
+                            <div className="setting-row">
+                                <label>{t('sidePanel.defaults.ductDiameter')}</label>
+                                <select
+                                    className="zone-select"
+                                    value={ductDiameterMm}
+                                    onChange={(event) => setDuctDiameterMm(Number(event.target.value))}
+                                >
+                                    {COMMON_DUCT_DIAMETERS_MM.map((diameter) => (
+                                        <option key={diameter} value={diameter}>
+                                            DN{diameter}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
                     </section>
 
-                    <section className="panel-section">
-                        <h2><Wrench /> Manifolds</h2>
-                        {manifolds.length === 0 && (
-                            <p className="info">No manifolds yet. Add one, then drag it into place on the canvas.</p>
-                        )}
-                        <div className="zone-list">
-                            {manifolds.map((manifold) => (
-                                <ManifoldCard
-                                    key={manifold.id}
-                                    manifold={manifold}
-                                    isSelected={manifold.id === selectedManifoldId}
-                                    zoneCount={zones.filter((zone) => zone.manifoldId === manifold.id).length}
-                                />
-                            ))}
-                        </div>
-                        <button className="btn" style={{ marginTop: '4px' }} onClick={addManifold}>
-                            <Plus /> Add manifold
-                        </button>
-                    </section>
+                    {designMode === 'heating' && (
+                        <section className="panel-section">
+                            <h2><Wrench /> {t('sidePanel.manifolds.title')}</h2>
+                            {manifolds.length === 0 && (
+                                <p className="info">{t('sidePanel.manifolds.empty')}</p>
+                            )}
+                            <div className="zone-list">
+                                {manifolds.map((manifold) => (
+                                    <ManifoldCard
+                                        key={manifold.id}
+                                        manifold={manifold}
+                                        isSelected={manifold.id === selectedManifoldId}
+                                        zoneCount={zones.filter((zone) => zone.manifoldId === manifold.id).length}
+                                    />
+                                ))}
+                            </div>
+                            <button className="btn" style={{ marginTop: '4px' }} onClick={addManifold}>
+                                <Plus /> {t('sidePanel.manifolds.add')}
+                            </button>
+                        </section>
+                    )}
                 </div>
             )}
 
-            {activeTab === 'zones' && (
+            {activeTab === 'zones' && designMode === 'heating' && (
                 <div className="side-panel-tab-content">
                     <section className="panel-section">
                         {zones.length === 0 && (
-                            <p className="info">No zones yet. Use "Polygon zone" or "Rect zone" to create one.</p>
+                            <p className="info">{t('sidePanel.zonesTab.empty')}</p>
                         )}
                         <div className="zone-list">
                             {zones.map((zone) => (
@@ -418,14 +524,16 @@ export default function SidePanel() {
 
                         {zones.length > 0 && (
                             <div className="grand-total">
-                                <strong>Grand Total: {totalGrand.toFixed(1)} m</strong>
+                                <strong>{t('sidePanel.zonesTab.grandTotal', { value: totalGrand.toFixed(1) })}</strong>
                             </div>
                         )}
                     </section>
                 </div>
             )}
+            {activeTab === 'zones' && designMode === 'ventilation' && <VentZonesTab />}
 
             {activeTab === 'heat' && <HeatTab />}
+            {activeTab === 'vent' && <VentTab />}
         </div>
     );
 }
