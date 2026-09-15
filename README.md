@@ -7,9 +7,11 @@
   <img alt="Comfort Draft — draw your rooms and ducts, get real pipe and duct routing" src=".github/banner-light.png">
 </picture>
 
+### [**Try it out**](https://co-draft.eu)
+
 [![Licence](https://img.shields.io/badge/licence-Apache%202.0-blue)](LICENSE)
 [![Built with](https://img.shields.io/badge/React%20·%20TypeScript%20·%20Vite-black)](#tech-stack)
-The App - [co-draft.eu](https://co-draft.eu)
+
 </div>
 
 # Comfort Draft
