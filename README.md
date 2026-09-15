@@ -19,6 +19,8 @@ the browser, in one tool: import a floor plan, draw your rooms, and get real pip
 duct routing with length, heat-output and airflow numbers you can actually build from.
 
 **No install, no account, nothing uploaded** — everything runs entirely client-side.
+You can try it out on [co-draft.eu](https://co-draft.eu).
+
 Free and open source, built on top of [Arend Jan Kramer's Underfloor Heating
 Designer](https://github.com/ArendJanKramer/underfloor-heating-designer) (see
 [Origin](#origin) below).
