@@ -1,7 +1,6 @@
 <div align="center">
 
-<!-- GitHub swaps these by the reader's theme; the artwork is real output from the
-     spiral generator in src/geometry/spiral.ts, not a drawing of it. -->
+<!-- GitHub swaps these by the reader's theme. -->
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/banner-dark.png">
   <source media="(prefers-color-scheme: light)" srcset=".github/banner-light.png">
@@ -23,6 +22,29 @@ duct routing with length, heat-output and airflow numbers you can actually build
 Free and open source, built on top of [Arend Jan Kramer's Underfloor Heating
 Designer](https://github.com/ArendJanKramer/underfloor-heating-designer) (see
 [Origin](#origin) below).
+
+## Screenshots
+
+<table>
+<tr>
+<td width="50%">
+
+<img src=".github/screenshot-heating.png" alt="Heating workspace: multiple manifolds, colour-coded per-zone pipe spirals, and per-zone heat output in the side panel">
+
+**Heating** — place multiple manifolds, route each room's spiral back to whichever one
+it belongs to, and read live length, flow, and heat-output-per-zone numbers as you draw.
+
+</td>
+<td width="50%">
+
+<img src=".github/screenshot-ventilation.png" alt="Ventilation workspace: supply and extract ducts routed to distribution boxes, with per-deflector airflow labels">
+
+**Ventilation** — route supply (red) and extract (blue) ducts from each deflector to a
+distribution box, with per-deflector airflow shown right on the plan.
+
+</td>
+</tr>
+</table>
 
 ## Two workspaces
 
